@@ -42,7 +42,7 @@ namespace my {
   // heap.
 
 struct MemoryBlock {
-  bool isFree;
+  size_t isFree;
   size_t size;
 };
 
@@ -55,18 +55,30 @@ void * endOfHeap;
     char *hi = (char*)mem_heap_hi() + 1;
     size_t size = 0;
 
-    p = lo;
-    while (lo <= p && p < hi) {
-      size = ALIGN(*(size_t*)p + SIZE_T_SIZE);
-      p += size;
-    }
+    // p = lo;
+    // while (lo <= p && p < hi) {
+    //   size = ALIGN(*(size_t*)p + SIZE_T_SIZE);
+    //   p += size;
+    // }
 
-    if (p != hi) {
-      printf("Bad headers did not end at heap_hi!\n");
-      printf("heap_lo: %p, heap_hi: %p, size: %lu, p: %p\n", lo, hi, size, p);
-      return -1;
-    }
+    // if (p != hi) {
+    //   printf("Bad headers did not end at heap_hi!\n");
+    //   printf("heap_lo: %p, heap_hi: %p, size: %lu, p: %p\n", lo, hi, size, p);
+    //   return -1;
+    // }
 
+    void * currentLoc = memoryStart;
+    MemoryBlock * currentLocMB = (MemoryBlock *) memoryStart;
+    void * memoryLocToReturn = 0;
+    int alignedSize = ALIGN(size + sizeof(MemoryBlock));
+    while (currentLoc != endOfHeap) {
+      if (!(currentLocMB->isFree == 1 || currentLocMB->isFree == 0)) {
+        printf("Bad isFree\n");
+        return -1;
+      }
+      currentLoc = currentLoc + currentLocMB->size;
+      currentLocMB = (MemoryBlock *) currentLoc;
+    }
     return 0;
   }
 
@@ -88,6 +100,12 @@ void * endOfHeap;
     int alignedSize = ALIGN(size + sizeof(MemoryBlock));
     while (currentLoc != endOfHeap) {
       if (currentLocMB->isFree) {
+        if (currentLocMB->size > alignedSize + sizeof(MemoryBlock)) {
+          MemoryBlock * nextBlock = (MemoryBlock *)((char *)currentLoc + alignedSize);
+          nextBlock->size = currentLocMB->size - alignedSize;
+          nextBlock->isFree = true;
+          currentLocMB->size = alignedSize;
+        }
         if (currentLocMB->size >= alignedSize) {
           currentLocMB->isFree = false;
           memoryLocToReturn = currentLoc;
