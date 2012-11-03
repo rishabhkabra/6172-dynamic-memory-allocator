@@ -48,7 +48,7 @@ struct MemoryBlock {
   MemoryBlock * nextFreeBlock; // pointer to the next free block in the binned free list that this belongs to.
   MemoryBlock * previousFreeBlock; // pointer to the previous free block in the binned free list that this belongs to.
   uint32_t size;
-  uint32_t previousBlockSize;
+  uint32_t isFree;
 };
 
 void * memoryStart; //is always mem_heap_lo
@@ -89,6 +89,21 @@ MemoryBlock * bins[NUM_OF_BINS];
     return 0;
   }
 
+static inline void printStateOfMemory() {
+  void * loc = memoryStart;
+  MemoryBlock * locMB;
+  while (loc && loc != endOfHeap) {
+    locMB = (MemoryBlock *) loc;
+    if (locMB->isFree) {
+      std::cout<<"{"<<locMB->size<<"}";
+    }
+    else {
+      std::cout<<"["<<locMB->size<<"]";
+    }
+    loc = (void *)((char *) loc + locMB->size);
+  }
+}
+
 static inline int getBinIndex(uint32_t size) {
   assert (size > 0);
   return (floor(log2(size)) >= NUM_OF_BINS) ? (NUM_OF_BINS - 1) : floor(log2(size));
@@ -102,7 +117,7 @@ static inline int getBinIndex(uint32_t size) {
     int alignedSize = ALIGN(size + sizeof(MemoryBlock));
     MemoryBlock * currentLocMB, * previousLocMB;
     int i = getBinIndex(alignedSize);
-    //std::cout<<"\n\nAsked for allocation of size "<<size;
+    std::cout<<"\n\nAsked for allocation of size "<<size<<"\n";
     //std::cout<<"\nNeed "<<alignedSize<<" to accommodate header.";
     while (i < NUM_OF_BINS) {
       previousLocMB = 0;
@@ -139,6 +154,8 @@ static inline int getBinIndex(uint32_t size) {
           }
           currentLocMB->nextFreeBlock = 0; // to indicate that this block is not free anymore
           currentLocMB->previousFreeBlock = 0;
+          currentLocMB->isFree = false;
+          printStateOfMemory();
           return memoryLocToReturn;
         }
         previousLocMB = currentLocMB;
@@ -159,6 +176,7 @@ static inline int getBinIndex(uint32_t size) {
     currentLocMB->nextFreeBlock = 0;
     currentLocMB->previousFreeBlock = 0;
     currentLocMB->size = alignedSize;
+    currentLocMB->isFree = false;
     /*
     if (increase > alignedSize) {
       ((MemoryBlock *)((char *) currentLoc + currentLocMB->size))->isFree = true;
@@ -167,29 +185,32 @@ static inline int getBinIndex(uint32_t size) {
     */
     memoryLocToReturn = (void *) ((char *)currentLoc + sizeof(MemoryBlock));
     //std::cout<<"\nMemory Location To Return: "<<memoryLocToReturn;
+    printStateOfMemory();
     return memoryLocToReturn;
 }
 
 
   void allocator::free(void *ptr) {
-    //std::cout<<"\n\nAsked to free space at "<<ptr;
+    std::cout<<"\n\nAsked to free space at "<<ptr;
     MemoryBlock * mb;
     mb = (MemoryBlock *) ((char *) ptr - sizeof(MemoryBlock));
-    MemoryBlock * nextMb = (MemoryBlock *) ((char *) mb + mb->size);
+    MemoryBlock * nextMB = (MemoryBlock *) ((char *) mb + mb->size);
     size_t totalFree = 0;
-    while(nextMb != endOfHeap && (nextMb->previousFreeBlock || nextMb->nextFreeBlock)) {
-      totalFree += nextMb->size;
-      if (nextMb->previousFreeBlock) {
-        nextMb->previousFreeBlock->nextFreeBlock = nextMb->nextFreeBlock;
+    while(nextMB != endOfHeap && nextMB->isFree) {
+      totalFree += nextMB->size;
+      if (nextMB->previousFreeBlock) {
+        nextMB->previousFreeBlock->nextFreeBlock = nextMB->nextFreeBlock;
       } else {
-        bins[getBinIndex(nextMb->size)] = mb->nextFreeBlock;
+        bins[getBinIndex(nextMB->size)] = mb->nextFreeBlock;
       }
-      if (nextMb->nextFreeBlock) {
-        nextMb->nextFreeBlock->previousFreeBlock = nextMb->previousFreeBlock;
+      if (nextMB->nextFreeBlock) {
+        nextMB->nextFreeBlock->previousFreeBlock = nextMB->previousFreeBlock;
       }
-      nextMb = (MemoryBlock *) ((char *) nextMb + nextMb->size);
+      nextMB = (MemoryBlock *) ((char *) nextMB + nextMB->size);
     }
     mb->size += totalFree;
+    mb->isFree = true;
+    std::cout<<", which is a block of size "<<mb->size<<"\n";
     //std::cout<<"\nSize of block that needs to be freed = "<<mb->size;
 
     int index = getBinIndex(mb->size);
@@ -202,14 +223,15 @@ static inline int getBinIndex(uint32_t size) {
     //std::cout<<"\nThe bin's head now points to "<<bins[index];
     /*
       //coalescing:
-    MemoryBlock * nextMb = (MemoryBlock *) ((char *) mb + mb->size);
+    MemoryBlock * nextMB = (MemoryBlock *) ((char *) mb + mb->size);
     size_t totalFree = 0;
-    while(nextMb != endOfHeap && nextMb->isFree) {
-      totalFree += nextMb->size;
-      nextMb = (MemoryBlock *) ((char *) nextMb + nextMb->size);
+    while(nextMB != endOfHeap && nextMB->isFree) {
+      totalFree += nextMB->size;
+      nextMB = (MemoryBlock *) ((char *) nextMB + nextMB->size);
     }
     mb->size += totalFree;
     */
+    printStateOfMemory();
   }
 
   // realloc - Implemented simply in terms of malloc and free
