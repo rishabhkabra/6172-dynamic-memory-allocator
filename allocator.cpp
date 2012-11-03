@@ -46,6 +46,7 @@ namespace my {
 
 struct MemoryBlock {
   MemoryBlock * nextFreeBlock; // pointer to the next free block in the binned free list that this belongs to.
+  MemoryBlock * previousFreeBlock; // pointer to the previous free block in the binned free list that this belongs to.
   uint32_t size;
   uint32_t previousBlockSize;
 };
@@ -91,12 +92,12 @@ MemoryBlock * bins[NUM_OF_BINS];
 static inline int getBinIndex(uint32_t size) {
   assert (size > 0);
   return (floor(log2(size)) >= NUM_OF_BINS) ? (NUM_OF_BINS - 1) : floor(log2(size));
-} 
+}
 
   //  malloc - Allocate a block by incrementing the brk pointer.
   //  Always allocate a block whose size is a multiple of the alignment.
   void * allocator::malloc(size_t size) {
-    
+
     void * currentLoc, * memoryLocToReturn = 0;
     int alignedSize = ALIGN(size + sizeof(MemoryBlock));
     MemoryBlock * currentLocMB, * previousLocMB;
@@ -111,7 +112,7 @@ static inline int getBinIndex(uint32_t size) {
       while (currentLoc && currentLoc != endOfHeap) {
         /*
           if (currentLocMB->size > alignedSize + sizeof(MemoryBlock)) {
-          // we have enough space in currentLocMB to split it instead of assigning the whole block 
+          // we have enough space in currentLocMB to split it instead of assigning the whole block
           MemoryBlock * nextBlock = (MemoryBlock *)((char *)currentLoc + alignedSize);
           nextBlock->size = currentLocMB->size - alignedSize;
           nextBlock->isFree = true;
@@ -124,13 +125,20 @@ static inline int getBinIndex(uint32_t size) {
           //std::cout<<"\nMemory location to return: "<<memoryLocToReturn;
           if (previousLocMB) {
             previousLocMB->nextFreeBlock = currentLocMB->nextFreeBlock;
+            if (previousLocMB->nextFreeBlock) {
+              previousLocMB->nextFreeBlock->previousFreeBlock = previousLocMB;
+            }
             //std::cout<<"\nSetting previous MemoryBlock ("<<previousLocMB<<")'s next free block to "<<currentLocMB->nextFreeBlock;
-          } 
+          }
           else {
             bins[i] = currentLocMB->nextFreeBlock;
+            if (bins[i]) {
+              currentLocMB->nextFreeBlock->previousFreeBlock = 0;
+            }
             //std::cout<<"\nSetting head block at bin["<<i<<"] to "<<currentLocMB->nextFreeBlock;
           }
           currentLocMB->nextFreeBlock = 0; // to indicate that this block is not free anymore
+          currentLocMB->previousFreeBlock = 0;
           return memoryLocToReturn;
         }
         previousLocMB = currentLocMB;
@@ -149,11 +157,12 @@ static inline int getBinIndex(uint32_t size) {
     endOfHeap += alignedSize; // increase
     currentLocMB = (MemoryBlock *) currentLoc;
     currentLocMB->nextFreeBlock = 0;
+    currentLocMB->previousFreeBlock = 0;
     currentLocMB->size = alignedSize;
     /*
     if (increase > alignedSize) {
-      ((MemoryBlock *)((char *) currentLoc + currentLocMB->size))->isFree = true; 
-      ((MemoryBlock *)((char *) currentLoc + currentLocMB->size))->size = increase - alignedSize; 
+      ((MemoryBlock *)((char *) currentLoc + currentLocMB->size))->isFree = true;
+      ((MemoryBlock *)((char *) currentLoc + currentLocMB->size))->size = increase - alignedSize;
     }
     */
     memoryLocToReturn = (void *) ((char *)currentLoc + sizeof(MemoryBlock));
@@ -166,11 +175,28 @@ static inline int getBinIndex(uint32_t size) {
     //std::cout<<"\n\nAsked to free space at "<<ptr;
     MemoryBlock * mb;
     mb = (MemoryBlock *) ((char *) ptr - sizeof(MemoryBlock));
+    MemoryBlock * nextMb = (MemoryBlock *) ((char *) mb + mb->size);
+    size_t totalFree = 0;
+    while(nextMb != endOfHeap && (nextMb->previousFreeBlock || nextMb->nextFreeBlock)) {
+      totalFree += nextMb->size;
+      if (nextMb->previousFreeBlock) {
+        nextMb->previousFreeBlock->nextFreeBlock = nextMb->nextFreeBlock;
+      } else {
+        bins[getBinIndex(nextMb->size)] = mb->nextFreeBlock;
+      }
+      if (nextMb->nextFreeBlock) {
+        nextMb->nextFreeBlock->previousFreeBlock = nextMb->previousFreeBlock;
+      }
+      nextMb = (MemoryBlock *) ((char *) nextMb + nextMb->size);
+    }
+    mb->size += totalFree;
     //std::cout<<"\nSize of block that needs to be freed = "<<mb->size;
+
     int index = getBinIndex(mb->size);
     //std::cout<<"\nBin to which this block should be assigned = "<<index;
     //std::cout<<"\nHead of the bin currently points to "<<bins[index];
     mb->nextFreeBlock = bins[index];
+    mb->previousFreeBlock = 0;
     //std::cout<<"\nThis block's next free block pointer now points to "<<bins[index];
     bins[index] = mb;
     //std::cout<<"\nThe bin's head now points to "<<bins[index];
@@ -184,7 +210,6 @@ static inline int getBinIndex(uint32_t size) {
     }
     mb->size += totalFree;
     */
-   
   }
 
   // realloc - Implemented simply in terms of malloc and free
