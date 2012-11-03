@@ -40,6 +40,15 @@ namespace my {
   // check - This checks our invariant that the size_t header before every
   // block points to either the beginning of the next block, or the end of the
   // heap.
+
+struct MemoryBlock {
+  bool isFree;
+  size_t size;
+};
+
+void * memoryStart; //is always mem_heap_lo
+void * endOfHeap;
+
   int allocator::check() {
     char *p;
     char *lo = (char*)mem_heap_lo();
@@ -65,43 +74,50 @@ namespace my {
   // calls are made.  Since this is a very simple implementation, we just
   // return success.
   int allocator::init() {
+    endOfHeap = mem_heap_lo();
+    memoryStart = endOfHeap;
     return 0;
   }
 
   //  malloc - Allocate a block by incrementing the brk pointer.
   //  Always allocate a block whose size is a multiple of the alignment.
   void * allocator::malloc(size_t size) {
-    // We allocate a little bit of extra memory so that we can store the
-    // size of the block we've allocated.  Take a look at realloc to see
-    // one example of a place where this can come in handy.
-    int aligned_size = ALIGN(size + SIZE_T_SIZE);
-
-    // Expands the heap by the given number of bytes and returns a pointer to
-    // the newly-allocated area.  This is a slow call, so you will want to
-    // make sure you don't wind up calling it on every malloc.
-    void *p = mem_sbrk(aligned_size);
-
-    if (p == (void *)-1) {
-      // Whoops, an error of some sort occurred.  We return NULL to let
-      // the client code know that we weren't able to allocate memory.
-      return NULL;
-    } else {
-      // We store the size of the block we've allocated in the first
-      // SIZE_T_SIZE bytes.
-      *(size_t*)p = size;
-
-      // Then, we return a pointer to the rest of the block of memory,
-      // which is at least size bytes long.  We have to cast to uint8_t
-      // before we try any pointer arithmetic because voids have no size
-      // and so the compiler doesn't know how far to move the pointer.
-      // Since a uint8_t is always one byte, adding SIZE_T_SIZE after
-      // casting advances the pointer by SIZE_T_SIZE bytes.
-      return (void *)((char *)p + SIZE_T_SIZE);
+    void * currentLoc = memoryStart;
+    MemoryBlock * currentLocMB = (MemoryBlock *) memoryStart;
+    void * memoryLocToReturn = 0;
+    int alignedSize = ALIGN(size + sizeof(MemoryBlock));
+    while (currentLoc != endOfHeap) {
+      if (currentLocMB->isFree) {
+        if (currentLocMB->size >= alignedSize) {
+          currentLocMB->isFree = false;
+          memoryLocToReturn = currentLoc;
+          break;
+        }
+      }
+      currentLoc = currentLoc + currentLocMB->size;
+      currentLocMB = (MemoryBlock *) currentLoc;
     }
+    if (!memoryLocToReturn) {
+      void *p = mem_sbrk(alignedSize);
+      if (p == (void *) -1) {
+        return NULL;
+      }
+      memoryLocToReturn = endOfHeap;
+      endOfHeap += alignedSize;
+      currentLoc = memoryLocToReturn;
+      currentLocMB = (MemoryBlock *) currentLoc;
+      currentLocMB->isFree = false;
+      currentLocMB->size = alignedSize;
+    }
+    memoryLocToReturn = (void *) ((char *)memoryLocToReturn + sizeof(MemoryBlock));
+    return memoryLocToReturn;
   }
 
   // free - Freeing a block does nothing.
   void allocator::free(void *ptr) {
+    MemoryBlock * mb;
+    mb = (MemoryBlock *) ((char *) ptr - sizeof(MemoryBlock));
+    mb->isFree = true;
   }
 
   // realloc - Implemented simply in terms of malloc and free
