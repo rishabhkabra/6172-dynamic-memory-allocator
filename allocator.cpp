@@ -136,6 +136,13 @@ void * endOfHeap;
     MemoryBlock * mb;
     mb = (MemoryBlock *) ((char *) ptr - sizeof(MemoryBlock));
     mb->isFree = true;
+    MemoryBlock * nextMb = (MemoryBlock *) ((char *) mb + mb->size);
+    size_t totalFree = 0;
+    while(nextMb != endOfHeap && nextMb->isFree) {
+      totalFree += nextMb->size;
+      nextMb = (MemoryBlock *) ((char *) nextMb + nextMb->size);
+    }
+    mb->size += totalFree;
   }
 
   // realloc - Implemented simply in terms of malloc and free
