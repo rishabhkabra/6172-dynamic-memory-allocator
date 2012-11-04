@@ -191,6 +191,7 @@ static inline void printStateOfMemory() {
 }
 static inline void assignBlockToBinnedList(MemoryBlock * mb) {
   assert (mb != 0);
+  assert (mb->isFree);
   int index = getBinIndex(mb->size);
   mb->nextFreeBlock = bins[index];
   if (bins[index]) {
@@ -198,7 +199,6 @@ static inline void assignBlockToBinnedList(MemoryBlock * mb) {
     bins[index]->previousFreeBlock = mb;
   }
   mb->previousFreeBlock = 0;
-  mb->isFree = true;
   bins[index] = mb;
 }
 
@@ -292,37 +292,56 @@ void * allocator::malloc(size_t size) {
     //std::cout<<"\n\nAsked to free space at "<<ptr;
     MemoryBlock * mb;
     mb = (MemoryBlock *) ((char *) ptr - sizeof(MemoryBlock));
-    /*
-    MemoryBlock * nextMb = (MemoryBlock *) ((char *) mb + mb->size);
+    assert(mb->nextFreeBlock == 0 && mb->previousFreeBlock == 0);
+    mb->isFree = true;
+
+    // Coalesce with free blocks on the right
+    MemoryBlock * nextMB = (MemoryBlock *) ((char *) mb + mb->size);
     size_t totalFree = 0;
-    while(nextMb != endOfHeap && (nextMb->previousFreeBlock || nextMb->nextFreeBlock)) {
-      totalFree += nextMb->size;
-      if (nextMb->previousFreeBlock) {
-        nextMb->previousFreeBlock->nextFreeBlock = nextMb->nextFreeBlock;
-      } else {
-        bins[getBinIndex(nextMb->size)] = mb->nextFreeBlock;
-      }
-      if (nextMb->nextFreeBlock) {
-        nextMb->nextFreeBlock->previousFreeBlock = nextMb->previousFreeBlock;
-      }
-      nextMb = (MemoryBlock *) ((char *) nextMb + nextMb->size);
+    while(nextMB != endOfHeap && nextMB->isFree) {
+      totalFree += nextMB->size;
+      removeBlockFromBinnedList(nextMB, getBinIndex(nextMB->size));
+      // is it also necessary to reset nextMB's footer?
+      nextMB = (MemoryBlock *) ((char *) nextMB + nextMB->size);
     }
     mb->size += totalFree;
-    */
-    //std::cout<<"\nSize of block that needs to be freed = "<<mb->size;
+    assignBlockFooter(mb);
+
+    // Coalesce with free blocks on the left
+    if ((void *) mb > memoryStart) {
+      assert((void *) mb >= (void *)((char *) memoryStart + TOTAL_BLOCK_OVERHEAD));
+      MemoryBlockFooter * footer = (MemoryBlockFooter *)((char *) mb - sizeof(MemoryBlockFooter));
+      MemoryBlock * prevMB = (MemoryBlock *) ((char *) mb - *footer);
+      totalFree = mb->size;
+      //bool entered = false;
+      while (prevMB && (void *) prevMB >= memoryStart && prevMB->isFree) { // could remove first boolean predicate
+        //entered = true;
+        totalFree += prevMB->size;
+        removeBlockFromBinnedList(prevMB, getBinIndex(prevMB->size));
+        mb = prevMB;
+        if ((void *) prevMB == memoryStart) {
+          break;
+        }
+        footer = (MemoryBlockFooter *)((char *) prevMB - sizeof(MemoryBlockFooter));
+        prevMB = (MemoryBlock *) ((char *) prevMB - *footer);
+      }
+      /*
+      if (entered) {
+        std::cout<<"\n\nSuccessful left coalesce. Size of block before was: "<<mb->size<<". State of memory before coalesce: ";
+        printStateOfMemory();
+      }
+      */
+      mb->size = totalFree;
+      assignBlockFooter(mb);
+      /*
+      if (entered) {
+        std::cout<<"\nNew size of block: "<<mb->size<<". New state of memory: ";
+        printStateOfMemory();
+      }
+      */
+    }
 
     assignBlockToBinnedList(mb);
-    //std::cout<<"\nThe bin's head now points to "<<bins[index];
-    /*
-      //coalescing:
-    MemoryBlock * nextMb = (MemoryBlock *) ((char *) mb + mb->size);
-    size_t totalFree = 0;
-    while(nextMb != endOfHeap && nextMb->isFree) {
-      totalFree += nextMb->size;
-      nextMb = (MemoryBlock *) ((char *) nextMb + nextMb->size);
-    }
-    mb->size += totalFree;
-    */
   }
 
   // realloc - Implemented simply in terms of malloc and free
