@@ -48,7 +48,7 @@ struct MemoryBlock {
   MemoryBlock * nextFreeBlock; // pointer to the next free block in the binned free list that this belongs to.
   MemoryBlock * previousFreeBlock; // pointer to the previous free block in the binned free list that this belongs to.
   uint32_t size;
-  uint32_t previousBlockSize;
+  bool isFree;;
 };
 
 void * memoryStart; //is always mem_heap_lo
@@ -61,7 +61,14 @@ MemoryBlock * bins[NUM_OF_BINS];
     char *lo = (char*)mem_heap_lo();
     char *hi = (char*)mem_heap_hi() + 1;
     size_t size = 0;
-
+    MemoryBlock * locMB;
+    for (int i = 0; i < NUM_OF_BINS; i++) {
+      locMB = bins[i];
+      while (locMB) {
+        assert(locMB->isFree);
+        locMB = locMB->nextFreeBlock;
+      }
+    }
     // p = lo;
     // while (lo <= p && p < hi) {
     //   size = ALIGN(*(size_t*)p + SIZE_T_SIZE);
@@ -97,7 +104,7 @@ static inline int getBinIndex(uint32_t size) {
 static inline void assignBlockToBinnedList(MemoryBlock * mb) {
     int index = getBinIndex(mb->size);
     mb->nextFreeBlock = bins[index];
-    mb->previousFreeBlock = 0;
+    mb->isFree = true;
     bins[index] = mb;
 }
 
@@ -146,6 +153,7 @@ static inline void assignBlockToBinnedList(MemoryBlock * mb) {
           }
           currentLocMB->nextFreeBlock = 0; // to indicate that this block is not free anymore
           currentLocMB->previousFreeBlock = 0;
+          currentLocMB->isFree = false;
           return memoryLocToReturn;
         }
         previousLocMB = currentLocMB;
@@ -166,6 +174,7 @@ static inline void assignBlockToBinnedList(MemoryBlock * mb) {
     currentLocMB->nextFreeBlock = 0;
     currentLocMB->previousFreeBlock = 0;
     currentLocMB->size = alignedSize;
+    currentLocMB->isFree = false;
     /*
     if (increase > alignedSize) {
       ((MemoryBlock *)((char *) currentLoc + currentLocMB->size))->isFree = true;
