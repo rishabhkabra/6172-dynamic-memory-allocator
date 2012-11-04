@@ -94,6 +94,13 @@ static inline int getBinIndex(uint32_t size) {
   return (floor(log2(size)) >= NUM_OF_BINS) ? (NUM_OF_BINS - 1) : floor(log2(size));
 }
 
+static inline void assignBlockToBinnedList(MemoryBlock * mb) {
+    int index = getBinIndex(mb->size);
+    mb->nextFreeBlock = bins[index];
+    mb->previousFreeBlock = 0;
+    bins[index] = mb;
+}
+
   //  malloc - Allocate a block by incrementing the brk pointer.
   //  Always allocate a block whose size is a multiple of the alignment.
   void * allocator::malloc(size_t size) {
@@ -194,13 +201,7 @@ static inline int getBinIndex(uint32_t size) {
     */
     //std::cout<<"\nSize of block that needs to be freed = "<<mb->size;
 
-    int index = getBinIndex(mb->size);
-    //std::cout<<"\nBin to which this block should be assigned = "<<index;
-    //std::cout<<"\nHead of the bin currently points to "<<bins[index];
-    mb->nextFreeBlock = bins[index];
-    mb->previousFreeBlock = 0;
-    //std::cout<<"\nThis block's next free block pointer now points to "<<bins[index];
-    bins[index] = mb;
+    assignBlockToBinnedList(mb);
     //std::cout<<"\nThe bin's head now points to "<<bins[index];
     /*
       //coalescing:
