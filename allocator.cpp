@@ -54,6 +54,7 @@ struct MemoryBlock {
 typedef uint32_t MemoryBlockFooter;
 
 #define TOTAL_BLOCK_OVERHEAD (sizeof(MemoryBlock) + sizeof(MemoryBlockFooter))
+#define FREE_BLOCK_SPLIT_THRESHOLD 0
 
 void * memoryStart; //is always mem_heap_lo
 void * endOfHeap;
@@ -189,6 +190,11 @@ static inline void removeBlockFromBinnedList (MemoryBlock * mb, int i) {
   } 
 }
 
+static inline void assignBlockFooter (MemoryBlock * mb) {
+  MemoryBlockFooter * footer = (MemoryBlockFooter *) ((char *) mb + mb->size - sizeof(MemoryBlockFooter));
+  *footer = mb->size;
+}
+
   //  malloc - Allocate a block by incrementing the brk pointer.
   //  Always allocate a block whose size is a multiple of the alignment.
 void * allocator::malloc(size_t size) {
@@ -204,15 +210,18 @@ void * allocator::malloc(size_t size) {
     currentLocMB = (MemoryBlock *) bins[i];
     //std::cout<<"\nChecking bin "<<i<<" whose first free block is "<<bins[i];
       while (currentLoc && currentLoc != endOfHeap) {
-        /*
-          if (currentLocMB->size > alignedSize + sizeof(MemoryBlock)) {
+       
+        if (currentLocMB->size > alignedSize + TOTAL_BLOCK_OVERHEAD + FREE_BLOCK_SPLIT_THRESHOLD) {
           // we have enough space in currentLocMB to split it instead of assigning the whole block
           MemoryBlock * nextBlock = (MemoryBlock *)((char *)currentLoc + alignedSize);
           nextBlock->size = currentLocMB->size - alignedSize;
           nextBlock->isFree = true;
+          assignBlockFooter(nextBlock);
+          assignBlockToBinnedList(nextBlock);
           currentLocMB->size = alignedSize;
-          }
-        */
+          assignBlockFooter(currentLocMB);
+        }
+       
         if (currentLocMB->size >= alignedSize) {
           //std::cout<<"\nCurrent MemoryBlock ("<<currentLocMB<<") has size "<<currentLocMB->size<<" and is a match.";
           memoryLocToReturn = (void *) ((char *)currentLoc + sizeof(MemoryBlock));
@@ -241,8 +250,8 @@ void * allocator::malloc(size_t size) {
     currentLocMB->previousFreeBlock = 0;
     currentLocMB->size = alignedSize;
     currentLocMB->isFree = false;
-    MemoryBlockFooter * footer = (MemoryBlockFooter *) ((char *) currentLocMB + currentLocMB->size - sizeof(MemoryBlockFooter));
-    *footer = currentLocMB->size;
+    assignBlockFooter(currentLocMB);
+
     /*
     if (increase > alignedSize) {
       ((MemoryBlock *)((char *) currentLoc + currentLocMB->size))->isFree = true;
