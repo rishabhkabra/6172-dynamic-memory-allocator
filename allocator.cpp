@@ -51,6 +51,10 @@ struct MemoryBlock {
   bool isFree;;
 };
 
+typedef uint32_t MemoryBlockFooter;
+
+#define TOTAL_BLOCK_OVERHEAD (sizeof(MemoryBlock) + sizeof(MemoryBlockFooter))
+
 void * memoryStart; //is always mem_heap_lo
 void * endOfHeap;
 #define NUM_OF_BINS 32
@@ -61,6 +65,7 @@ MemoryBlock * bins[NUM_OF_BINS];
     char *lo = (char*)mem_heap_lo();
     char *hi = (char*)mem_heap_hi() + 1;
     size_t size = 0;
+
     MemoryBlock * locMB;
     // Check that bins contain only free blocks
     for (int i = 0; i < NUM_OF_BINS; i++) {
@@ -79,15 +84,27 @@ MemoryBlock * bins[NUM_OF_BINS];
       locMB = bins[i];
       if (locMB && locMB->previousFreeBlock != 0) {
         printf("Bin %d points to a block whose previousFreeBlock is not 0\n", i);
+        return -1;
       }
       while (locMB) {
         if (locMB->nextFreeBlock && locMB->nextFreeBlock->previousFreeBlock != locMB) {
           printf("Bin %d contains a memory block whose previousFreeBlock does not point to the preceding element of the binned list\n", i);
+          return -1;
         }
         locMB = locMB->nextFreeBlock;
       }
     }
-        
+      
+    // Check that all memory blocks in managed space have correctly set footers
+    MemoryBlockFooter * footer;  
+    for (locMB = (MemoryBlock *) memoryStart; locMB && locMB !=endOfHeap; locMB = (MemoryBlock *) ((char *) locMB + locMB->size))
+    {
+      footer = (MemoryBlockFooter *) ((char *) locMB + locMB->size - sizeof(MemoryBlockFooter));
+      if (locMB->size != *footer) {
+        printf("Memory space contains a block at %p that does not have a correctly assigned footer\n", locMB);
+        return -1;
+      }
+    }
     // p = lo;
     // while (lo <= p && p < hi) {
     //   size = ALIGN(*(size_t*)p + SIZE_T_SIZE);
@@ -174,18 +191,18 @@ static inline void removeBlockFromBinnedList (MemoryBlock * mb, int i) {
 
   //  malloc - Allocate a block by incrementing the brk pointer.
   //  Always allocate a block whose size is a multiple of the alignment.
-  void * allocator::malloc(size_t size) {
-
-    void * currentLoc, * memoryLocToReturn = 0;
-    int alignedSize = ALIGN(size + sizeof(MemoryBlock));
-    MemoryBlock * currentLocMB;
-    int i = getBinIndex(alignedSize);
-    //std::cout<<"\n\nAsked for allocation of size "<<size;
-    //std::cout<<"\nNeed "<<alignedSize<<" to accommodate header.";
-    while (i < NUM_OF_BINS) {
-      currentLoc = bins[i]; //currentLoc is set to the first element in the binned free list
-      currentLocMB = (MemoryBlock *) bins[i];
-      //std::cout<<"\nChecking bin "<<i<<" whose first free block is "<<bins[i];
+void * allocator::malloc(size_t size) {
+  
+  void * currentLoc, * memoryLocToReturn = 0;
+  int alignedSize = ALIGN(size + TOTAL_BLOCK_OVERHEAD);
+  MemoryBlock * currentLocMB;
+  int i = getBinIndex(alignedSize);
+  //std::cout<<"\n\nAsked for allocation of size "<<size;
+  //std::cout<<"\nNeed "<<alignedSize<<" to accommodate header.";
+  while (i < NUM_OF_BINS) {
+    currentLoc = bins[i]; //currentLoc is set to the first element in the binned free list
+    currentLocMB = (MemoryBlock *) bins[i];
+    //std::cout<<"\nChecking bin "<<i<<" whose first free block is "<<bins[i];
       while (currentLoc && currentLoc != endOfHeap) {
         /*
           if (currentLocMB->size > alignedSize + sizeof(MemoryBlock)) {
@@ -224,6 +241,8 @@ static inline void removeBlockFromBinnedList (MemoryBlock * mb, int i) {
     currentLocMB->previousFreeBlock = 0;
     currentLocMB->size = alignedSize;
     currentLocMB->isFree = false;
+    MemoryBlockFooter * footer = (MemoryBlockFooter *) ((char *) currentLocMB + currentLocMB->size - sizeof(MemoryBlockFooter));
+    *footer = currentLocMB->size;
     /*
     if (increase > alignedSize) {
       ((MemoryBlock *)((char *) currentLoc + currentLocMB->size))->isFree = true;
@@ -240,8 +259,8 @@ static inline void removeBlockFromBinnedList (MemoryBlock * mb, int i) {
     //std::cout<<"\n\nAsked to free space at "<<ptr;
     MemoryBlock * mb;
     mb = (MemoryBlock *) ((char *) ptr - sizeof(MemoryBlock));
-    MemoryBlock * nextMb = (MemoryBlock *) ((char *) mb + mb->size);
     /*
+    MemoryBlock * nextMb = (MemoryBlock *) ((char *) mb + mb->size);
     size_t totalFree = 0;
     while(nextMb != endOfHeap && (nextMb->previousFreeBlock || nextMb->nextFreeBlock)) {
       totalFree += nextMb->size;
