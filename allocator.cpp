@@ -101,6 +101,33 @@ static inline int getBinIndex(uint32_t size) {
   return (floor(log2(size)) >= NUM_OF_BINS) ? (NUM_OF_BINS - 1) : floor(log2(size));
 }
 
+static inline void printStateOfBins() {
+    for (int i = 0; i < NUM_OF_BINS; i++) {
+      MemoryBlock * locMB = bins[i];
+      std::cout<<"\nBin["<<i<<"]: ";
+      while (locMB) {
+        if (locMB->isFree) {
+          std::cout<<"{"<<locMB->size<<"}";
+        } else {
+          std::cout<<"["<<locMB->size<<"]";
+        }
+        locMB = locMB->nextFreeBlock;
+    }
+  }
+}
+
+static inline void printStateOfMemory() {
+  MemoryBlock * mb = (MemoryBlock *) memoryStart;
+  std::cout<<"\n";
+  while (mb && mb != endOfHeap) {
+    if (mb->isFree) {
+      std::cout<<"{"<<mb->size<<"}";
+    } else {
+      std::cout<<"["<<mb->size<<"]";
+    }
+    mb = mb + mb->size;
+  }
+}
 static inline void assignBlockToBinnedList(MemoryBlock * mb) {
     int index = getBinIndex(mb->size);
     mb->nextFreeBlock = bins[index];
