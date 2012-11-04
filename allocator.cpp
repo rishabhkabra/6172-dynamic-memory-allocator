@@ -129,10 +129,16 @@ static inline void printStateOfMemory() {
   }
 }
 static inline void assignBlockToBinnedList(MemoryBlock * mb) {
-    int index = getBinIndex(mb->size);
-    mb->nextFreeBlock = bins[index];
-    mb->isFree = true;
-    bins[index] = mb;
+  assert (mb != 0);
+  int index = getBinIndex(mb->size);
+  mb->nextFreeBlock = bins[index];
+  if (bins[index]) {
+    assert (bins[index]->previousFreeBlock == 0);
+    bins[index]->previousFreeBlock = mb;
+  }
+  mb->previousFreeBlock = 0;
+  mb->isFree = true;
+  bins[index] = mb;
 }
 
   //  malloc - Allocate a block by incrementing the brk pointer.
