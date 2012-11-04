@@ -55,6 +55,8 @@ typedef uint32_t MemoryBlockFooter;
 
 #define TOTAL_BLOCK_OVERHEAD (sizeof(MemoryBlock) + sizeof(MemoryBlockFooter))
 #define FREE_BLOCK_SPLIT_THRESHOLD 0
+#define MEMORY_LOCATION_TO_RETURN(mbptr) ((void *) ((char *)(mbptr) + sizeof(MemoryBlock)))
+
 
 void * memoryStart; //is always mem_heap_lo
 void * endOfHeap;
@@ -219,12 +221,24 @@ static inline void assignBlockFooter (MemoryBlock * mb) {
   *footer = mb->size;
 }
 
+static inline void truncateMemoryBlock (MemoryBlock * mb, size_t new_size) {
+  if (mb->size > new_size + TOTAL_BLOCK_OVERHEAD + FREE_BLOCK_SPLIT_THRESHOLD) {
+    MemoryBlock * nextBlock = (MemoryBlock *)((char *)mb + new_size);
+    nextBlock->size = mb->size - new_size;
+    nextBlock->isFree = true;
+    assignBlockFooter(nextBlock);
+    assignBlockToBinnedList(nextBlock);
+    mb->size = new_size;
+    assignBlockFooter(mb);
+  }
+}
+
   //  malloc - Allocate a block by incrementing the brk pointer.
   //  Always allocate a block whose size is a multiple of the alignment.
 void * allocator::malloc(size_t size) {
   
-  void * currentLoc, * memoryLocToReturn = 0;
-  int alignedSize = ALIGN(size + TOTAL_BLOCK_OVERHEAD);
+  void * currentLoc;
+  size_t alignedSize = ALIGN(size + TOTAL_BLOCK_OVERHEAD);
   MemoryBlock * currentLocMB;
   int i = getBinIndex(alignedSize);
   //std::cout<<"\n\nAsked for allocation of size "<<size;
@@ -233,28 +247,14 @@ void * allocator::malloc(size_t size) {
     currentLoc = bins[i]; //currentLoc is set to the first element in the binned free list
     currentLocMB = (MemoryBlock *) bins[i];
     //std::cout<<"\nChecking bin "<<i<<" whose first free block is "<<bins[i];
-      while (currentLoc && currentLoc != endOfHeap) {
-       
-        if (currentLocMB->size > alignedSize + TOTAL_BLOCK_OVERHEAD + FREE_BLOCK_SPLIT_THRESHOLD) {
-          // we have enough space in currentLocMB to split it instead of assigning the whole block
-          MemoryBlock * nextBlock = (MemoryBlock *)((char *)currentLoc + alignedSize);
-          nextBlock->size = currentLocMB->size - alignedSize;
-          nextBlock->isFree = true;
-          assignBlockFooter(nextBlock);
-          assignBlockToBinnedList(nextBlock);
-          currentLocMB->size = alignedSize;
-          assignBlockFooter(currentLocMB);
-        }
-       
+      while (currentLoc && currentLoc != endOfHeap) {  
         if (currentLocMB->size >= alignedSize) {
-          //std::cout<<"\nCurrent MemoryBlock ("<<currentLocMB<<") has size "<<currentLocMB->size<<" and is a match.";
-          memoryLocToReturn = (void *) ((char *)currentLoc + sizeof(MemoryBlock));
-          //std::cout<<"\nMemory location to return: "<<memoryLocToReturn;
+          truncateMemoryBlock(currentLocMB, alignedSize);
           removeBlockFromBinnedList(currentLocMB, i);
-          currentLocMB->nextFreeBlock = 0; // to indicate that this block is not free anymore
+          currentLocMB->nextFreeBlock = 0;
           currentLocMB->previousFreeBlock = 0;
           currentLocMB->isFree = false;
-          return memoryLocToReturn;
+          return MEMORY_LOCATION_TO_RETURN(currentLoc);
         }
         currentLocMB = currentLocMB->nextFreeBlock;
         currentLoc = (void *) currentLocMB;
@@ -275,16 +275,7 @@ void * allocator::malloc(size_t size) {
     currentLocMB->size = alignedSize;
     currentLocMB->isFree = false;
     assignBlockFooter(currentLocMB);
-
-    /*
-    if (increase > alignedSize) {
-      ((MemoryBlock *)((char *) currentLoc + currentLocMB->size))->isFree = true;
-      ((MemoryBlock *)((char *) currentLoc + currentLocMB->size))->size = increase - alignedSize;
-    }
-    */
-    memoryLocToReturn = (void *) ((char *)currentLoc + sizeof(MemoryBlock));
-    //std::cout<<"\nMemory Location To Return: "<<memoryLocToReturn;
-    return memoryLocToReturn;
+    return MEMORY_LOCATION_TO_RETURN(currentLoc);
 }
 
 
@@ -340,40 +331,53 @@ void * allocator::malloc(size_t size) {
       }
       */
     }
-
     assignBlockToBinnedList(mb);
   }
 
-  // realloc - Implemented simply in terms of malloc and free
-  void * allocator::realloc(void *ptr, size_t size) {
-    void *newptr;
-    size_t copy_size;
+// realloc - Implemented simply in terms of malloc and free
+void * allocator::realloc(void *ptr, size_t size) {
+  //  std::cout<<"\n\nAsked to reallocate block at "<<ptr;
+  MemoryBlock * mb = (MemoryBlock *) ((char *) ptr - sizeof(MemoryBlock));
+  //  std::cout<<" that had an internal size of "<<mb->size - TOTAL_BLOCK_OVERHEAD<<", an aligned size (incl. overhead) of "<<mb->size<<", and a new requested size of "<<size;
+  size_t alignedSize = ALIGN(size + TOTAL_BLOCK_OVERHEAD);
+  //  std::cout<<"\nOriginal state of memory: ";
+  //  printStateOfMemory();
 
-    // Allocate a new chunk of memory, and fail if that allocation fails.
-    newptr = malloc(size);
-    if (NULL == newptr)
-      return NULL;
-
-    // Get the size of the old block of memory.  Take a peek at malloc(),
-    // where we stashed this in the SIZE_T_SIZE bytes directly before the
-    // address we returned.  Now we can back up by that many bytes and read
-    // the size.
-    copy_size = *(size_t*)((uint8_t*)ptr - SIZE_T_SIZE);
-
-    // If the new block is smaller than the old one, we have to stop copying
-    // early so that we don't write off the end of the new block of memory.
-    if (size < copy_size)
-      copy_size = size;
-
-    // This is a standard library call that performs a simple memory copy.
-    std::memcpy(newptr, ptr, copy_size);
-
-    // Release the old block.
-    free(ptr);
-
-    // Return a pointer to the new block.
-    return newptr;
+  if (alignedSize < mb->size) { // new size is less than the existing size of the block
+    truncateMemoryBlock(mb, alignedSize);
+    //    std::cout<<"\nReallocated by truncating to aligned size. \nNew state of memory: ";
+    //    printStateOfMemory();
+    return MEMORY_LOCATION_TO_RETURN(mb);
   }
+  
+  if (alignedSize > mb->size) {
+    MemoryBlock * nextMB = (MemoryBlock *) ((char *) mb + mb->size);
+    if (nextMB != endOfHeap && nextMB->isFree && (mb->size + nextMB->size) >= alignedSize) {
+      removeBlockFromBinnedList(nextMB, getBinIndex(nextMB->size));
+      mb->size = mb->size + nextMB->size;
+      assignBlockFooter(mb);
+      truncateMemoryBlock(mb, alignedSize);
+      //      std::cout<<"\nReallocated by using adjacent free block on right. \nNew state of memory: ";
+      //      printStateOfMemory();
+      return MEMORY_LOCATION_TO_RETURN(mb);
+    }
+    else {
+      void * newptr = malloc(size);
+      if (!newptr) {
+        return NULL;
+      }
+      size_t copy_size = mb->size - TOTAL_BLOCK_OVERHEAD; // internal size of the original memory block
+      copy_size = (size < copy_size)? size : copy_size; // if the new size is less that the original internal size, we MUST NOT copy more than new size bytes to the new block
+      //      std::memcpy(newptr, ptr, copy_size);
+      free(ptr);
+      //      std::cout<<"\nReallocated by calling malloc and free. Had to copy "<<copy_size<<" bytes using memcpy. \nNew state of memory: ";
+      //      printStateOfMemory();
+      return newptr;
+    }
+  }
+  //  std::cout<<"\nReturning original pointer as new alignedSize == original aligned size of memory block.";
+  return ptr; 
+}
 
   // call mem_reset_brk.
   void allocator::reset_brk() {
