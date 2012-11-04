@@ -176,6 +176,7 @@ static inline int getBinIndex(uint32_t size) {
     MemoryBlock * mb;
     mb = (MemoryBlock *) ((char *) ptr - sizeof(MemoryBlock));
     MemoryBlock * nextMb = (MemoryBlock *) ((char *) mb + mb->size);
+    /*
     size_t totalFree = 0;
     while(nextMb != endOfHeap && (nextMb->previousFreeBlock || nextMb->nextFreeBlock)) {
       totalFree += nextMb->size;
@@ -190,6 +191,7 @@ static inline int getBinIndex(uint32_t size) {
       nextMb = (MemoryBlock *) ((char *) nextMb + nextMb->size);
     }
     mb->size += totalFree;
+    */
     //std::cout<<"\nSize of block that needs to be freed = "<<mb->size;
 
     int index = getBinIndex(mb->size);
