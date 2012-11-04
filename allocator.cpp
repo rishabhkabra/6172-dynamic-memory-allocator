@@ -125,7 +125,7 @@ static inline void printStateOfMemory() {
     } else {
       std::cout<<"["<<mb->size<<"]";
     }
-    mb = mb + mb->size;
+    mb = (MemoryBlock *) ((char *) mb + mb->size);
   }
 }
 static inline void assignBlockToBinnedList(MemoryBlock * mb) {
