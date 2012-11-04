@@ -62,13 +62,32 @@ MemoryBlock * bins[NUM_OF_BINS];
     char *hi = (char*)mem_heap_hi() + 1;
     size_t size = 0;
     MemoryBlock * locMB;
+    // Check that bins contain only free blocks
     for (int i = 0; i < NUM_OF_BINS; i++) {
       locMB = bins[i];
       while (locMB) {
-        assert(locMB->isFree);
+        if (!(locMB->isFree)) {
+          printf("Bin %d contains a non-free memory block\n", i);
+          return -1;
+        }
         locMB = locMB->nextFreeBlock;
       }
     }
+
+    // Check that memory blocks in bins have correctly set previous and next pointers
+    for (int i = 0; i < NUM_OF_BINS; i++) {
+      locMB = bins[i];
+      if (locMB && locMB->previousFreeBlock != 0) {
+        printf("Bin %d points to a block whose previousFreeBlock is not 0\n", i);
+      }
+      while (locMB) {
+        if (locMB->nextFreeBlock && locMB->nextFreeBlock->previousFreeBlock != locMB) {
+          printf("Bin %d contains a memory block whose previousFreeBlock does not point to the preceding element of the binned list\n", i);
+        }
+        locMB = locMB->nextFreeBlock;
+      }
+    }
+        
     // p = lo;
     // while (lo <= p && p < hi) {
     //   size = ALIGN(*(size_t*)p + SIZE_T_SIZE);
@@ -141,18 +160,29 @@ static inline void assignBlockToBinnedList(MemoryBlock * mb) {
   bins[index] = mb;
 }
 
+static inline void removeBlockFromBinnedList (MemoryBlock * mb, int i) {
+  assert (mb != 0);
+  if (mb->previousFreeBlock) {
+    mb->previousFreeBlock->nextFreeBlock = mb->nextFreeBlock;
+  } else {
+    bins[i] = mb->nextFreeBlock;
+  }
+  if (mb->nextFreeBlock) {
+    mb->nextFreeBlock->previousFreeBlock = mb->previousFreeBlock;
+  } 
+}
+
   //  malloc - Allocate a block by incrementing the brk pointer.
   //  Always allocate a block whose size is a multiple of the alignment.
   void * allocator::malloc(size_t size) {
 
     void * currentLoc, * memoryLocToReturn = 0;
     int alignedSize = ALIGN(size + sizeof(MemoryBlock));
-    MemoryBlock * currentLocMB, * previousLocMB;
+    MemoryBlock * currentLocMB;
     int i = getBinIndex(alignedSize);
     //std::cout<<"\n\nAsked for allocation of size "<<size;
     //std::cout<<"\nNeed "<<alignedSize<<" to accommodate header.";
     while (i < NUM_OF_BINS) {
-      previousLocMB = 0;
       currentLoc = bins[i]; //currentLoc is set to the first element in the binned free list
       currentLocMB = (MemoryBlock *) bins[i];
       //std::cout<<"\nChecking bin "<<i<<" whose first free block is "<<bins[i];
@@ -170,26 +200,12 @@ static inline void assignBlockToBinnedList(MemoryBlock * mb) {
           //std::cout<<"\nCurrent MemoryBlock ("<<currentLocMB<<") has size "<<currentLocMB->size<<" and is a match.";
           memoryLocToReturn = (void *) ((char *)currentLoc + sizeof(MemoryBlock));
           //std::cout<<"\nMemory location to return: "<<memoryLocToReturn;
-          if (previousLocMB) {
-            previousLocMB->nextFreeBlock = currentLocMB->nextFreeBlock;
-            if (previousLocMB->nextFreeBlock) {
-              previousLocMB->nextFreeBlock->previousFreeBlock = previousLocMB;
-            }
-            //std::cout<<"\nSetting previous MemoryBlock ("<<previousLocMB<<")'s next free block to "<<currentLocMB->nextFreeBlock;
-          }
-          else {
-            bins[i] = currentLocMB->nextFreeBlock;
-            if (bins[i]) {
-              currentLocMB->nextFreeBlock->previousFreeBlock = 0;
-            }
-            //std::cout<<"\nSetting head block at bin["<<i<<"] to "<<currentLocMB->nextFreeBlock;
-          }
+          removeBlockFromBinnedList(currentLocMB, i);
           currentLocMB->nextFreeBlock = 0; // to indicate that this block is not free anymore
           currentLocMB->previousFreeBlock = 0;
           currentLocMB->isFree = false;
           return memoryLocToReturn;
         }
-        previousLocMB = currentLocMB;
         currentLocMB = currentLocMB->nextFreeBlock;
         currentLoc = (void *) currentLocMB;
       }
