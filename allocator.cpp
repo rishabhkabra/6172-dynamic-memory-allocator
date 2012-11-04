@@ -67,8 +67,8 @@ MemoryBlock * bins[NUM_OF_BINS];
     char *hi = (char*)mem_heap_hi() + 1;
     size_t size = 0;
 
-    MemoryBlock * locMB;
     // Check that bins contain only free blocks
+    MemoryBlock * locMB;
     for (int i = 0; i < NUM_OF_BINS; i++) {
       locMB = bins[i];
       while (locMB) {
@@ -95,6 +95,30 @@ MemoryBlock * bins[NUM_OF_BINS];
         locMB = locMB->nextFreeBlock;
       }
     }
+
+    /*
+    // Check that bins do not contain any duplicate blocks. This test is extremely slow. Use with caution.
+    MemoryBlock * locMB2;
+    for (int i = 0; i < NUM_OF_BINS; i++) {
+      locMB = bins[i];
+      while (locMB) {
+        locMB2 = locMB->nextFreeBlock;
+        int j = i;
+        while (j < NUM_OF_BINS) {
+          while (locMB2) {
+            if (locMB == locMB2) {
+              printf("Bin %d contains a memory block that is also present in bin %d\n", i, j);
+              return -1;
+            }
+            locMB2 = locMB2->nextFreeBlock;
+          }
+          j++;
+          locMB2 = (j < NUM_OF_BINS) ? bins[j] : 0;
+        }
+        locMB = locMB->nextFreeBlock;
+      }
+    }
+    */  
       
     // Check that all memory blocks in managed space have correctly set footers
     MemoryBlockFooter * footer;  
