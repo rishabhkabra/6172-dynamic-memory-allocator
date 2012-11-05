@@ -42,35 +42,61 @@ typedef struct range_t {
 // track of the extent of every allocated block payload. We use the
 // range list to detect any overlapping allocated blocks.
 
-
 // add_range - As directed by request opnum in trace tracenum,
 // we've just called the student's malloc to allocate a block of
 // size bytes at addr lo. After checking the block for correctness,
 // we create a range struct for this block and add it to the range list.
 template <class Type>
 static int add_range(Type *impl, range_t **ranges, char *lo,
-    int size, int tracenum, int opnum) {
-  //  char *hi = lo + size - 1;
-  //  range_t *p = NULL;
+  int size, int tracenum, int opnum) {
+  char *hi = lo + size - 1;
+  range_t *p;
+  range_t *pnext;
+
 
   // You can use this as a buffer for writing messages with sprintf.
-  // char msg[MAXLINE];
+  char msg[MAXLINE];
 
   assert(size > 0);
 
   // Payload addresses must be ALIGNMENT-byte aligned
-  // TODO(project3): YOUR CODE HERE
+  if (!IS_ALIGNED(lo)) {
+    sprintf(msg, "Memory pointer %p is not aligned correctly.\n", lo);
+    malloc_error(tracenum, opnum, msg);
+    return 0;
+  }
 
   // The payload must lie within the extent of the heap
-  // TODO(project3): YOUR CODE HERE
+  if (impl->heap_lo() > lo || impl->heap_hi() < hi) {
+    sprintf(msg, "Returned range is not within heap boundary.\n");
+    malloc_error(tracenum, opnum, msg);
+    return 0;
+  }
 
   // The payload must not overlap any other payloads
-  // TODO(project3): YOUR CODE HERE
-
+  for (p = *ranges; p != NULL; p = pnext) {
+    if (hi == p->lo || hi == p->hi || lo == p->lo || lo == p->hi) {
+      sprintf(msg, "Returned range overlaps with an existing range.\n");
+      malloc_error(tracenum, opnum, msg);
+      return 0;
+    }
+    if ((hi >= p->lo && lo <= p->lo) ||
+        (hi <= p->hi && lo >= p->lo) ||
+        (hi >= p->hi && lo <= p->lo) ||
+        (lo <= p->hi && hi >= p->hi)) {
+      sprintf(msg, "Returned range overlaps with an existing range.\n");
+      malloc_error(tracenum, opnum, msg);
+      return 0;
+    }
+    pnext = p->next;
+  }
   // Everything looks OK, so remember the extent of this block by creating a
   // range struct and adding it the range list.
-  // TODO(project3):  YOUR CODE HERE
-
+  range_t * new_range = (range_t *) malloc(sizeof(range_t));
+  new_range->hi = hi;
+  new_range->lo = lo;
+  new_range->next = *ranges;
+  *ranges = new_range;
   return 1;
 }
 
@@ -82,7 +108,21 @@ static void remove_range(range_t **ranges, char *lo) {
   // Iterate the linked list until you find the range with a matching lo
   // payload and remove it.  Remember to properly handle the case where the
   // payload is in the first node, and to free the node after unlinking it.
-  // TODO(project3): YOUR CODE HERE
+  range_t *p;
+  range_t *pprev;
+  p = *ranges;
+  if (p->lo == lo) {
+    *ranges = p->next;
+    free(p);
+    return;
+  }
+  for(pprev = p, p = p->next; p != NULL; pprev = p, p = p->next) {
+    if (p->lo == lo) {
+      pprev->next = p->next;
+      free(p);
+      return;
+    }
+  }
 }
 
 // clear_ranges - free all of the range records for a trace
@@ -108,6 +148,7 @@ int eval_mm_valid(Type *impl, trace_t *trace, int tracenum) {
   char *oldp = NULL;
   char *p = NULL;
   range_t *ranges = NULL;
+  int count;
 
   // Reset the heap.
   impl->reset_brk();
@@ -140,7 +181,11 @@ int eval_mm_valid(Type *impl, trace_t *trace, int tracenum) {
 
         // Fill the allocated region with some unique data that you can check
         // for if the region is copied via realloc.
-        // TODO(project3): YOUR CODE HERE
+        count = -13;
+        for(char * inc = p; inc < p + size; inc += sizeof(int)) {
+          *((int *) inc) = count;
+          count--;
+        }
 
         // Remember region
         trace->blocks[index] = p;
@@ -169,7 +214,22 @@ int eval_mm_valid(Type *impl, trace_t *trace, int tracenum) {
         oldsize = trace->block_sizes[index];
         if (size < oldsize)
           oldsize = size;
-        // TODO(project3): YOUR CODE HERE
+
+        count = -13;
+        for(char * inc = newp; inc < newp + oldsize; inc += sizeof(int)) {
+          if (*((int *) inc) != count) {
+            char msg[MAXLINE];
+            sprintf(msg, "The memory bock value: %d was not equal to the expected value(%d).\n", *((int *) inc), count);
+            malloc_error(tracenum, i, msg);
+            return 0;
+          }
+          count--;
+        }
+        count = -13;
+        for(char * inc = newp; inc < newp + size; inc += sizeof(int)) {
+          *((int *) inc) = count;
+          count--;
+        }
 
         // Remember region
         trace->blocks[index] = newp;
