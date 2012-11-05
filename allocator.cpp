@@ -54,13 +54,14 @@ struct MemoryBlock {
 typedef uint32_t MemoryBlockFooter;
 
 #define TOTAL_BLOCK_OVERHEAD (sizeof(MemoryBlock) + sizeof(MemoryBlockFooter))
-#define FREE_BLOCK_SPLIT_THRESHOLD 0
+#define BIN_INDEX_THRESHOLD 1024
+#define NUM_OF_BINS 150
+#define FREE_BLOCK_SPLIT_THRESHOLD 8
 #define MEMORY_LOCATION_TO_RETURN(mbptr) ((void *) ((char *)(mbptr) + sizeof(MemoryBlock)))
 
 
 void * memoryStart; //is always mem_heap_lo
 void * endOfHeap;
-#define NUM_OF_BINS 32
 MemoryBlock * bins[NUM_OF_BINS];
 
   int allocator::check() {
@@ -161,7 +162,10 @@ MemoryBlock * bins[NUM_OF_BINS];
 
 static inline int getBinIndex(uint32_t size) {
   assert (size > 0);
-  return (floor(log2(size)) >= NUM_OF_BINS) ? (NUM_OF_BINS - 1) : floor(log2(size));
+  if (size < BIN_INDEX_THRESHOLD) {
+    return size / 8;
+  }
+  return (floor(log2(size)) + 118 >= NUM_OF_BINS) ? (NUM_OF_BINS - 1) : 118 + floor(log2(size));
 }
 
 static inline void printStateOfBins() {
@@ -336,17 +340,17 @@ void * allocator::malloc(size_t size) {
 
 // realloc - Implemented simply in terms of malloc and free
 void * allocator::realloc(void *ptr, size_t size) {
-  //  std::cout<<"\n\nAsked to reallocate block at "<<ptr;
+   // std::cout<<"\n\nAsked to reallocate block at "<<ptr;
   MemoryBlock * mb = (MemoryBlock *) ((char *) ptr - sizeof(MemoryBlock));
-  //  std::cout<<" that had an internal size of "<<mb->size - TOTAL_BLOCK_OVERHEAD<<", an aligned size (incl. overhead) of "<<mb->size<<", and a new requested size of "<<size;
+   // std::cout<<" that had an internal size of "<<mb->size - TOTAL_BLOCK_OVERHEAD<<", an aligned size (incl. overhead) of "<<mb->size<<", and a new requested size of "<<size;
   size_t alignedSize = ALIGN(size + TOTAL_BLOCK_OVERHEAD);
-  //  std::cout<<"\nOriginal state of memory: ";
-  //  printStateOfMemory();
+   // std::cout<<"\nOriginal state of memory: ";
+   // printStateOfMemory();
 
   if (alignedSize < mb->size) { // new size is less than the existing size of the block
     truncateMemoryBlock(mb, alignedSize);
-    //    std::cout<<"\nReallocated by truncating to aligned size. \nNew state of memory: ";
-    //    printStateOfMemory();
+       // std::cout<<"\nReallocated by truncating to aligned size. \nNew state of memory: ";
+       // printStateOfMemory();
     return MEMORY_LOCATION_TO_RETURN(mb);
   }
   
@@ -357,8 +361,8 @@ void * allocator::realloc(void *ptr, size_t size) {
       mb->size = mb->size + nextMB->size;
       assignBlockFooter(mb);
       truncateMemoryBlock(mb, alignedSize);
-      //      std::cout<<"\nReallocated by using adjacent free block on right. \nNew state of memory: ";
-      //      printStateOfMemory();
+           // std::cout<<"\nReallocated by using adjacent free block on right. \nNew state of memory: ";
+           // printStateOfMemory();
       return MEMORY_LOCATION_TO_RETURN(mb);
     }
     else {
@@ -368,14 +372,14 @@ void * allocator::realloc(void *ptr, size_t size) {
       }
       size_t copy_size = mb->size - TOTAL_BLOCK_OVERHEAD; // internal size of the original memory block
       copy_size = (size < copy_size)? size : copy_size; // if the new size is less that the original internal size, we MUST NOT copy more than new size bytes to the new block
-      //      std::memcpy(newptr, ptr, copy_size);
+           std::memcpy(newptr, ptr, copy_size);
       free(ptr);
-      //      std::cout<<"\nReallocated by calling malloc and free. Had to copy "<<copy_size<<" bytes using memcpy. \nNew state of memory: ";
-      //      printStateOfMemory();
+           // std::cout<<"\nReallocated by calling malloc and free. Had to copy "<<copy_size<<" bytes using memcpy. \nNew state of memory: ";
+           // printStateOfMemory();
       return newptr;
     }
   }
-  //  std::cout<<"\nReturning original pointer as new alignedSize == original aligned size of memory block.";
+   // std::cout<<"\nReturning original pointer as new alignedSize == original aligned size of memory block.";
   return ptr; 
 }
 
