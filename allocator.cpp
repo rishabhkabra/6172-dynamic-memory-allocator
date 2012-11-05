@@ -152,7 +152,8 @@ namespace my {
     if (size < BIN_INDEX_THRESHOLD) {
       return size / 8;
     }
-    return (floor(log2(size)) + 118 >= NUM_OF_BINS) ? (NUM_OF_BINS - 1) : 118 + floor(log2(size));
+    int returnIndex = floor(log2(size)) + 118;
+    return ((returnIndex >= NUM_OF_BINS) ? (NUM_OF_BINS - 1) : returnIndex);
   }
 
   static inline void printStateOfBins() {
