@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <pthread.h>
 #include <iostream> // remove later
 #include "./allocator_interface.h"
 #include "./memlib.h"
@@ -40,30 +41,35 @@
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
 namespace my {
-  // check - This checks our invariant that the size_t header before every
-  // block points to either the beginning of the next block, or the end of the
-  // heap.
+// check - This checks our invariant that the size_t header before every
+// block points to either the beginning of the next block, or the end of the
+// heap.
 
-  struct MemoryBlock {
-    MemoryBlock * nextFreeBlock; // pointer to the next free block in the binned free list that this belongs to.
-    MemoryBlock * previousFreeBlock; // pointer to the previous free block in the binned free list that this belongs to.
-    uint32_t size;
-    bool isFree;;
-  };
+struct MemoryBlock {
+  MemoryBlock * nextFreeBlock; // pointer to the next free block in the binned free list that this belongs to.
+  MemoryBlock * previousFreeBlock; // pointer to the previous free block in the binned free list that this belongs to.
+  uint32_t size;
+  bool isFree;;
+};
 
-  typedef uint32_t MemoryBlockFooter;
+typedef uint32_t MemoryBlockFooter;
 
-  #define TOTAL_BLOCK_OVERHEAD (sizeof(MemoryBlock) + sizeof(MemoryBlockFooter))
-  #define BIN_INDEX_THRESHOLD 1024
-  #define NUM_OF_BINS 150
-  #define FREE_BLOCK_SPLIT_THRESHOLD 8
-  #define MEMORY_LOCATION_TO_RETURN(mbptr) ((void *) ((char *)(mbptr) + sizeof(MemoryBlock)))
+#define TOTAL_BLOCK_OVERHEAD (sizeof(MemoryBlock) + sizeof(MemoryBlockFooter))
+#define BIN_INDEX_THRESHOLD 1024
+#define NUM_OF_BINS 150
+#define FREE_BLOCK_SPLIT_THRESHOLD 8
+#define MEMORY_LOCATION_TO_RETURN(mbptr) ((void *) ((char *)(mbptr) + sizeof(MemoryBlock)))
 
-  void * memoryStart; //is always mem_heap_lo
-  void * endOfHeap;
-  MemoryBlock * bins[NUM_OF_BINS];
+void * memoryStart; //is always mem_heap_lo
+void * endOfHeap;
+MemoryBlock * bins[NUM_OF_BINS];
+pthread_mutex_t globalLock;
+pthread_mutexattr_t globalLockAttr;
+#define GLOBAL_LOCK pthread_mutex_lock(&globalLock)
+#define GLOBAL_UNLOCK pthread_mutex_unlock(&globalLock)
 
   int allocator::check() {
+    GLOBAL_LOCK;
     char *p;
     char *lo = (char*)mem_heap_lo();
     char *hi = (char*)mem_heap_hi() + 1;
@@ -76,6 +82,7 @@ namespace my {
       while (locMB) {
         if (!(locMB->isFree)) {
           printf("Bin %d contains a non-free memory block\n", i);
+          GLOBAL_UNLOCK;
           return -1;
         }
         locMB = locMB->nextFreeBlock;
@@ -87,11 +94,13 @@ namespace my {
       locMB = bins[i];
       if (locMB && locMB->previousFreeBlock != 0) {
         printf("Bin %d points to a block whose previousFreeBlock is not 0\n", i);
+        GLOBAL_UNLOCK;
         return -1;
       }
       while (locMB) {
         if (locMB->nextFreeBlock && locMB->nextFreeBlock->previousFreeBlock != locMB) {
           printf("Bin %d contains a memory block whose previousFreeBlock does not point to the preceding element of the binned list\n", i);
+          GLOBAL_UNLOCK;
           return -1;
         }
         locMB = locMB->nextFreeBlock;
@@ -129,9 +138,12 @@ namespace my {
       footer = (MemoryBlockFooter *) ((char *) locMB + locMB->size - sizeof(MemoryBlockFooter));
       if (locMB->size != *footer) {
         printf("Memory space contains a block at %p that does not have a correctly assigned footer\n", locMB);
+        GLOBAL_UNLOCK;
         return -1;
       }
     }
+
+    GLOBAL_UNLOCK;
     return 0;
   }
 
@@ -139,11 +151,16 @@ namespace my {
   // calls are made.  Since this is a very simple implementation, we just
   // return success.
   int allocator::init() {
+    pthread_mutexattr_init(&globalLockAttr);
+    pthread_mutexattr_settype(&globalLockAttr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&globalLock, &globalLockAttr);
+    GLOBAL_LOCK;
     endOfHeap = mem_heap_lo();
     memoryStart = endOfHeap;
     for (int i = 0; i < NUM_OF_BINS; i++) {
       bins[i] = 0;
     }
+    GLOBAL_UNLOCK;
     return 0;
   }
 
@@ -229,6 +246,7 @@ namespace my {
   //  malloc - Allocate a block by incrementing the brk pointer.
   //  Always allocate a block whose size is a multiple of the alignment.
   void * allocator::malloc(size_t size) {
+    GLOBAL_LOCK;
     void * currentLoc;
     size_t alignedSize = ALIGN(size + TOTAL_BLOCK_OVERHEAD);
     MemoryBlock * currentLocMB;
@@ -246,6 +264,7 @@ namespace my {
             currentLocMB->nextFreeBlock = 0;
             currentLocMB->previousFreeBlock = 0;
             currentLocMB->isFree = false;
+            GLOBAL_UNLOCK;
             return MEMORY_LOCATION_TO_RETURN(currentLoc);
           }
           currentLocMB = currentLocMB->nextFreeBlock;
@@ -257,6 +276,7 @@ namespace my {
       //size_t increase = (alignedSize < 496)? 512: alignedSize;
       void *p = mem_sbrk(alignedSize); // increase
       if (p == (void *) -1) {
+        GLOBAL_UNLOCK;
         return NULL;
       }
       currentLoc = endOfHeap;
@@ -267,10 +287,12 @@ namespace my {
       currentLocMB->size = alignedSize;
       currentLocMB->isFree = false;
       assignBlockFooter(currentLocMB);
+      GLOBAL_UNLOCK;
       return MEMORY_LOCATION_TO_RETURN(currentLoc);
   }
 
   void allocator::free(void *ptr) {
+    GLOBAL_LOCK;
     //std::cout<<"\n\nAsked to free space at "<<ptr;
     MemoryBlock * mb;
     mb = (MemoryBlock *) ((char *) ptr - sizeof(MemoryBlock));
@@ -323,10 +345,12 @@ namespace my {
       */
     }
     assignBlockToBinnedList(mb);
+    GLOBAL_UNLOCK;
   }
 
   // realloc - Implemented simply in terms of malloc and free
   void * allocator::realloc(void *ptr, size_t size) {
+    GLOBAL_LOCK;
      // std::cout<<"\n\nAsked to reallocate block at "<<ptr;
     MemoryBlock * mb = (MemoryBlock *) ((char *) ptr - sizeof(MemoryBlock));
      // std::cout<<" that had an internal size of "<<mb->size - TOTAL_BLOCK_OVERHEAD<<", an aligned size (incl. overhead) of "<<mb->size<<", and a new requested size of "<<size;
@@ -338,6 +362,7 @@ namespace my {
       truncateMemoryBlock(mb, alignedSize);
          // std::cout<<"\nReallocated by truncating to aligned size. \nNew state of memory: ";
          // printStateOfMemory();
+      GLOBAL_UNLOCK;
       return MEMORY_LOCATION_TO_RETURN(mb);
     }
     if (alignedSize > mb->size) {
@@ -349,11 +374,13 @@ namespace my {
         truncateMemoryBlock(mb, alignedSize);
              // std::cout<<"\nReallocated by using adjacent free block on right. \nNew state of memory: ";
              // printStateOfMemory();
+        GLOBAL_UNLOCK;
         return MEMORY_LOCATION_TO_RETURN(mb);
       }
       else {
         void * newptr = malloc(size);
         if (!newptr) {
+          GLOBAL_UNLOCK;
           return NULL;
         }
         size_t copy_size = mb->size - TOTAL_BLOCK_OVERHEAD; // internal size of the original memory block
@@ -361,11 +388,13 @@ namespace my {
              std::memcpy(newptr, ptr, copy_size);
         free(ptr);
              // std::cout<<"\nReallocated by calling malloc and free. Had to copy "<<copy_size<<" bytes using memcpy. \nNew state of memory: ";
-             // printStateOfMemory();
+        // printStateOfMemory();
+        GLOBAL_UNLOCK;
         return newptr;
       }
     }
      // std::cout<<"\nReturning original pointer as new alignedSize == original aligned size of memory block.";
+    GLOBAL_UNLOCK;
     return ptr;
   }
 
