@@ -76,7 +76,7 @@ void * endOfHeap;
 pthread_mutex_t globalLock;
 pthread_mutexattr_t globalLockAttr;
 __thread MemoryBlock * bins[NUM_OF_BINS];
-__thread ThreadSharedInfo sharedInfo;
+__thread ThreadSharedInfo currentThreadInfo;
 __thread bool isInitialized = false;
 
 
@@ -139,15 +139,17 @@ int allocator::check() {
   
   // Check that all memory blocks in managed space have correctly set footers
   MemoryBlockFooter * footer;
+  GLOBAL_LOCK; // necessary for endOfHeap access
   for (locMB = (MemoryBlock *) memoryStart; locMB && locMB !=endOfHeap; locMB = (MemoryBlock *) ((char *) locMB + locMB->size))
   {
     footer = MB_ADDRESS_TO_OWN_FOOTER_ADDRESS(locMB);
     if (locMB->size != *footer) {
       printf("Memory space contains a block at %p that does not have a correctly assigned footer\n", locMB);
+      GLOBAL_UNLOCK;
       return -1;
     }
   }
-  
+  GLOBAL_UNLOCK;
   return 0;
 }
 
@@ -171,8 +173,8 @@ static inline void threadInit() {
     //    std::cout<<"\n\tbins["<<i<<"] is located at "<<&bins[i];
     bins[i] = 0;
   }
-  sharedInfo.unbinnedBlocks = 0;
-  pthread_mutex_init(&(sharedInfo.localLock), NULL);
+  currentThreadInfo.unbinnedBlocks = 0;
+  pthread_mutex_init(&(currentThreadInfo.localLock), NULL);
   //  std::cout<<"\nThread local mutex located at "<<&localLock;
   //  std::cout<<"\ntlsKey located at "<<&tlsKey;
   isInitialized = true;
@@ -228,6 +230,20 @@ static inline void assignBlockToBinnedList(MemoryBlock * mb) {
   bins[index] = mb;
 }
 
+static inline void assignBlockToThreadSpecificUnbinnedList(MemoryBlock * mb) {
+  assert(mb != 0);
+  assert(mb->isFree);
+  pthread_mutex_lock(&(mb->threadInfo->localLock));
+  mb->nextFreeBlock = (MemoryBlock *) mb->threadInfo->unbinnedBlocks;
+  if ((MemoryBlock *) mb->threadInfo->unbinnedBlocks) {
+    assert (((MemoryBlock *) mb->threadInfo->unbinnedBlocks)->previousFreeBlock == 0);
+    ((MemoryBlock *) mb->threadInfo->unbinnedBlocks)->previousFreeBlock = mb;
+  }
+  mb->previousFreeBlock = 0;
+  mb->threadInfo->unbinnedBlocks = (void *) mb;
+  pthread_mutex_unlock(&(mb->threadInfo->localLock));
+}
+
 static inline void removeBlockFromBinnedList (MemoryBlock * mb, int i) {
   assert (mb != 0);
   if (mb->previousFreeBlock) {
@@ -250,6 +266,7 @@ static inline void truncateMemoryBlock (MemoryBlock * mb, size_t new_size) {
     MemoryBlock * nextBlock = (MemoryBlock *)((char *)mb + new_size);
     nextBlock->size = mb->size - new_size;
     nextBlock->isFree = true;
+    nextBlock->threadInfo = mb->threadInfo;
     assignBlockFooter(nextBlock);
     assignBlockToBinnedList(nextBlock);
     mb->size = new_size;
@@ -277,7 +294,7 @@ void * allocator::malloc(size_t size) {
     currentLoc = bins[i]; //currentLoc is set to the first element in the binned free list
     currentLocMB = (MemoryBlock *) bins[i];
     //std::cout<<"\nChecking bin "<<i<<" whose first free block is "<<bins[i];
-    while (currentLoc && currentLoc != endOfHeap) { // TODO: remove 2nd condition later
+    while (currentLoc) { // TODO: remove 2nd condition later
       if (currentLocMB->size >= alignedSize) {
         truncateMemoryBlock(currentLocMB, alignedSize);
         removeBlockFromBinnedList(currentLocMB, i);
@@ -307,19 +324,20 @@ void * allocator::malloc(size_t size) {
   currentLocMB->previousFreeBlock = 0;
   currentLocMB->size = alignedSize;
   currentLocMB->isFree = false;
+  currentLocMB->threadInfo = &currentThreadInfo;
   assignBlockFooter(currentLocMB);
   return MB_ADDRESS_TO_INTERNAL_SPACE_ADDRESS(currentLoc);
 }
 
 void allocator::free(void *ptr) {
-  return;
-  GLOBAL_LOCK;
   //std::cout<<"\n\nAsked to free space at "<<ptr;
   MemoryBlock * mb;
   mb = INTERNAL_SPACE_ADDRESS_TO_MB_ADDRESS(ptr);
   assert(mb->nextFreeBlock == 0 && mb->previousFreeBlock == 0);
   mb->isFree = true;
+  assignBlockToThreadSpecificUnbinnedList(mb);
   
+  /*
   // Coalesce with free blocks on the right
   MemoryBlock * nextMB = (MemoryBlock *) ((char *) mb + mb->size);
   size_t totalFree = 0;
@@ -350,23 +368,11 @@ void allocator::free(void *ptr) {
       footer = MB_ADDRESS_TO_PREVIOUS_FOOTER_ADDRESS(prevMB);
       prevMB = (MemoryBlock *) ((char *) prevMB - *footer);
     }
-    /*
-      if (entered) {
-      std::cout<<"\n\nSuccessful left coalesce. Size of block before was: "<<mb->size<<". State of memory before coalesce: ";
-      printStateOfMemory();
-      }
-    */
     mb->size = totalFree;
     assignBlockFooter(mb);
-    /*
-      if (entered) {
-      std::cout<<"\nNew size of block: "<<mb->size<<". New state of memory: ";
-      printStateOfMemory();
-      }
-    */
   }
   assignBlockToBinnedList(mb);
-  GLOBAL_UNLOCK;
+*/
 }
 
   // realloc - Implemented simply in terms of malloc and free
@@ -386,7 +392,10 @@ void * allocator::realloc(void *ptr, size_t size) {
   }
   if (alignedSize > mb->size) {
     MemoryBlock * nextMB = (MemoryBlock *) ((char *) mb + mb->size);
-    if (nextMB != endOfHeap && nextMB->isFree && (mb->size + nextMB->size) >= alignedSize) {
+    /*
+    GLOBAL_LOCK; // necessary for endOfHeap access
+    if (nextMB != endOfHeap && nextMB->isFree && (nextMB->theadInfo == mb->threadInfo) && (mb->size + nextMB->size) >= alignedSize) {
+      GLOBAL_UNLOCK;
       removeBlockFromBinnedList(nextMB, getBinIndex(nextMB->size));
       mb->size = mb->size + nextMB->size;
       assignBlockFooter(mb);
@@ -396,6 +405,8 @@ void * allocator::realloc(void *ptr, size_t size) {
       return MB_ADDRESS_TO_INTERNAL_SPACE_ADDRESS(mb);
     }
     else {
+      GLOBAL_UNLOCK;
+    */
       void * newptr = malloc(size);
       if (!newptr) {
         return NULL;
@@ -407,7 +418,7 @@ void * allocator::realloc(void *ptr, size_t size) {
       // std::cout<<"\nReallocated by calling malloc and free. Had to copy "<<copy_size<<" bytes using memcpy. \nNew state of memory: ";
       // printStateOfMemory();
       return newptr;
-    }
+    //}
   }
   // std::cout<<"\nReturning original pointer as new alignedSize == original aligned size of memory block.";
   return ptr;
