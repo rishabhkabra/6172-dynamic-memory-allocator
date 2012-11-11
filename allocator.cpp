@@ -272,12 +272,12 @@ static inline void assignBlockToThreadSpecificUnbinnedList(MemoryBlock * mb) {
   pthread_mutex_unlock(&(mbThreadInfo->localLock));
 }
 
-static inline void removeBlockFromBinnedList (MemoryBlock * mb, int i) {
+static inline void removeBlockFromLinkedList (MemoryBlock * mb, MemoryBlock * &listHead) {
   assert (mb != 0);
   if (mb->previousFreeBlock) {
     mb->previousFreeBlock->nextFreeBlock = mb->nextFreeBlock;
   } else {
-    bins[i] = mb->nextFreeBlock;
+    listHead = mb->nextFreeBlock;
   }
   if (mb->nextFreeBlock) {
     mb->nextFreeBlock->previousFreeBlock = mb->previousFreeBlock;
@@ -331,7 +331,7 @@ static inline void binAllUnbinnedBlocks() {
     while(nextMB != endOfHeap && nextMB->threadInfo == mb->threadInfo && nextMB->isFree) {
       //      std::cout<<"\nCoalescing with right block of size "<<nextMB->size<<" in bin: "<<getBinIndex(nextMB->size);
       totalFree += nextMB->size;
-      removeBlockFromBinnedList(nextMB, getBinIndex(nextMB->size));
+      removeBlockFromLinkedList(nextMB, bins[getBinIndex(nextMB->size)]);
       nextMB = (MemoryBlock *) ((char *) nextMB + nextMB->size);
     }
     mb->size += totalFree;
@@ -351,7 +351,7 @@ static inline void binAllUnbinnedBlocks() {
       totalFree = mb->size;
       while ((void *) prevMB >= memoryStart && prevMB->threadInfo == mb->threadInfo && prevMB->isFree) {
         totalFree += prevMB->size;
-        removeBlockFromBinnedList(prevMB, getBinIndex(prevMB->size));
+        removeBlockFromLinkedList(prevMB, bins[getBinIndex(prevMB->size)]);
         mb = prevMB;
         if ((void *) prevMB == memoryStart) {
           break;
@@ -398,7 +398,7 @@ void * allocator::malloc(size_t size) {
     while (currentLoc) {
       if (currentLocMB->size >= alignedSize) {
         truncateMemoryBlock(currentLocMB, alignedSize);
-        removeBlockFromBinnedList(currentLocMB, i);
+        removeBlockFromLinkedList(currentLocMB, bins[i]);
         currentLocMB->nextFreeBlock = 0;
         currentLocMB->previousFreeBlock = 0;
         currentLocMB->isFree = false;
@@ -445,6 +445,7 @@ void allocator::free(void *ptr) {
   // realloc - Implemented simply in terms of malloc and free
 void * allocator::realloc(void *ptr, size_t size) {
 
+  /*
   void * newptr = malloc(size);
   if (newptr == NULL)
     return NULL;
@@ -453,8 +454,8 @@ void * allocator::realloc(void *ptr, size_t size) {
   std::memcpy(newptr, ptr, copy_size);
   free(ptr);
   return newptr;
-
-  /*
+  */
+  
   // std::cout<<"\n\nAsked to reallocate block at "<<ptr;
   MemoryBlock * mb = INTERNAL_SPACE_ADDRESS_TO_MB_ADDRESS(ptr);
   // std::cout<<" that had an internal size of "<<mb->size - TOTAL_BLOCK_OVERHEAD<<", an aligned size (incl. overhead) of "<<mb->size<<", and a new requested size of "<<size;
@@ -471,7 +472,16 @@ void * allocator::realloc(void *ptr, size_t size) {
   if (alignedSize > mb->size) {
     MemoryBlock * nextMB = (MemoryBlock *) ((char *) mb + mb->size);
     if (nextMB != endOfHeap && nextMB->threadInfo == mb->threadInfo && nextMB->isFree && (mb->size + nextMB->size) >= alignedSize) {
-      removeBlockFromBinnedList(nextMB, getBinIndex(nextMB->size));
+      MemoryBlock * t = currentThreadInfo.unbinnedBlocks;
+      MemoryBlock ** listHead = &bins[getBinIndex(nextMB->size)];
+      while (t) {
+        if (nextMB == t) {
+          listHead = &(currentThreadInfo.unbinnedBlocks);
+          break;
+        }
+        t = t->nextFreeBlock;
+      }
+      removeBlockFromLinkedList(nextMB, *listHead);
       mb->size = mb->size + nextMB->size;
       assignBlockFooter(mb);
       truncateMemoryBlock(mb, alignedSize);
@@ -479,7 +489,7 @@ void * allocator::realloc(void *ptr, size_t size) {
       // printStateOfMemory();
       return MB_ADDRESS_TO_INTERNAL_SPACE_ADDRESS(mb);
     }
-    else {
+    else {  
       void * newptr = malloc(size);
       if (!newptr) {
         return NULL;
@@ -495,7 +505,7 @@ void * allocator::realloc(void *ptr, size_t size) {
   }
   // std::cout<<"\nReturning original pointer as new alignedSize == original aligned size of memory block.";
   return ptr;
-  */
+  
 }
 
 // call mem_reset_brk.
