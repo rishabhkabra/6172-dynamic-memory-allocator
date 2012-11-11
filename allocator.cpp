@@ -315,6 +315,7 @@ void allocator::free(void *ptr) {
   //std::cout<<"\n\nAsked to free space at "<<ptr;
   MemoryBlock * mb;
   mb = INTERNAL_SPACE_ADDRESS_TO_MB_ADDRESS(ptr);
+  assert(!mb->isFree);
   assert(mb->nextFreeBlock == 0 && mb->previousFreeBlock == 0);
   mb->isFree = true;
   return;
