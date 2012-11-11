@@ -96,7 +96,7 @@ int allocator::check() {
       locMB = locMB->nextFreeBlock;
     }
   }
-  
+
   // Check that memory blocks in bins have correctly set previous and next pointers
   for (int i = 0; i < NUM_OF_BINS; i++) {
     locMB = bins[i];
@@ -125,30 +125,31 @@ int allocator::check() {
       }
       locMB = locMB->nextFreeBlock;
   }
+
   /*
   // Check that bins do not contain any duplicate blocks. This test is extremely slow. Use with caution.
   MemoryBlock * locMB2;
   for (int i = 0; i < NUM_OF_BINS; i++) {
-  locMB = bins[i];
-  while (locMB) {
-  locMB2 = locMB->nextFreeBlock;
-  int j = i;
-  while (j < NUM_OF_BINS) {
-  while (locMB2) {
-  if (locMB == locMB2) {
-  printf("Bin %d contains a memory block that is also present in bin %d\n", i, j);
-  return -1;
-  }
-  locMB2 = locMB2->nextFreeBlock;
-  }
-  j++;
-  locMB2 = (j < NUM_OF_BINS) ? bins[j] : 0;
-  }
-        locMB = locMB->nextFreeBlock;
+    locMB = bins[i];
+    while (locMB) {
+      locMB2 = locMB->nextFreeBlock;
+      int j = i;
+      while (j < NUM_OF_BINS) {
+        while (locMB2) {
+          if (locMB == locMB2) {
+            printf("Bin %d contains a memory block that is also present in bin %d\n", i, j);
+            return -1;
+          }
+          locMB2 = locMB2->nextFreeBlock;
         }
-        }
+        j++;
+        locMB2 = (j < NUM_OF_BINS) ? bins[j] : 0;
+      }
+      locMB = locMB->nextFreeBlock;
+    }
+  }
   */
-  
+
   // Check that all memory blocks in managed space have correctly set footers and threadInfo
   MemoryBlockFooter * footer;
   for (locMB = (MemoryBlock *) memoryStart; locMB && locMB !=endOfHeap; locMB = (MemoryBlock *) ((char *) locMB + locMB->size))
@@ -165,7 +166,7 @@ int allocator::check() {
     }
     */
   }
-  
+
   return 0;
 }
 
@@ -185,15 +186,11 @@ int allocator::init() {
 }
 
 static inline void threadInit() {
-  //  std::cout<<"\nInitializing thread.";
   for (int i = 0; i < NUM_OF_BINS; i++) {
-    //    std::cout<<"\n\tbins["<<i<<"] is located at "<<&bins[i];
     bins[i] = 0;
   }
   currentThreadInfo.unbinnedBlocks = 0;
   pthread_mutex_init(&(currentThreadInfo.localLock), NULL);
-  //  std::cout<<"\nThread local mutex located at "<<&localLock;
-  //  std::cout<<"\ntlsKey located at "<<&tlsKey;
   isInitialized = true;
 }
 
@@ -267,7 +264,7 @@ static inline void assignBlockToThreadSpecificUnbinnedList(MemoryBlock * mb) {
     assert(mbThreadInfo->unbinnedBlocks->previousFreeBlock == 0);
     mbThreadInfo->unbinnedBlocks->previousFreeBlock = mb;
   }
-  mb->previousFreeBlock = 0;   
+  mb->previousFreeBlock = 0;
   mbThreadInfo->unbinnedBlocks = mb;
   pthread_mutex_unlock(&(mbThreadInfo->localLock));
 }
@@ -304,21 +301,21 @@ static inline void truncateMemoryBlock (MemoryBlock * mb, size_t new_size) {
   }
 }
 
-static inline void binAllUnbinnedBlocks() {  
+static inline void binAllUnbinnedBlocks() {
   pthread_mutex_lock(&(currentThreadInfo.localLock));
   MemoryBlock * mb = currentThreadInfo.unbinnedBlocks;
   MemoryBlock * nextMB, * prevMB;
   size_t totalFree;
-  
+
   while (mb) {
     assert(mb->isFree);
     assert(mb->threadInfo == (void *) &currentThreadInfo);
     mb->isFree = false;
     mb = mb->nextFreeBlock;
   }
-  
+
   mb = currentThreadInfo.unbinnedBlocks;
-  while (mb) {  
+  while (mb) {
     bool entered = false;
     // Coalesce with free blocks on the right
     nextMB = (MemoryBlock *) ((char *) mb + mb->size);
@@ -340,9 +337,9 @@ static inline void binAllUnbinnedBlocks() {
       //      std::cout<<"\nAfter coalescing: ";
       //      printStateOfBins();
     }
-    
+
     nextMB = mb->nextFreeBlock;
-    
+
     // Coalesce with free blocks on the left
     if ((void *) mb > memoryStart) {
       assert((void *) mb >= (void *)((char *) memoryStart + TOTAL_BLOCK_OVERHEAD));
@@ -360,9 +357,9 @@ static inline void binAllUnbinnedBlocks() {
         prevMB = (MemoryBlock *) ((char *) prevMB - *footer);
       }
       mb->size = totalFree;
-      assignBlockFooter(mb);  
+      assignBlockFooter(mb);
     }
-    
+
     mb->isFree = true;
     assignBlockToBinnedList(mb);
     currentThreadInfo.unbinnedBlocks = nextMB;
@@ -455,14 +452,14 @@ void * allocator::realloc(void *ptr, size_t size) {
   free(ptr);
   return newptr;
   */
-  
+
   // std::cout<<"\n\nAsked to reallocate block at "<<ptr;
   MemoryBlock * mb = INTERNAL_SPACE_ADDRESS_TO_MB_ADDRESS(ptr);
   // std::cout<<" that had an internal size of "<<mb->size - TOTAL_BLOCK_OVERHEAD<<", an aligned size (incl. overhead) of "<<mb->size<<", and a new requested size of "<<size;
   size_t alignedSize = ALIGN(size + TOTAL_BLOCK_OVERHEAD);
   // std::cout<<"\nOriginal state of memory: ";
   // printStateOfMemory();
-  
+
   if (alignedSize < mb->size) { // new size is less than the existing size of the block
     truncateMemoryBlock(mb, alignedSize);
     // std::cout<<"\nReallocated by truncating to aligned size. \nNew state of memory: ";
@@ -489,7 +486,7 @@ void * allocator::realloc(void *ptr, size_t size) {
       // printStateOfMemory();
       return MB_ADDRESS_TO_INTERNAL_SPACE_ADDRESS(mb);
     }
-    else {  
+    else {
       void * newptr = malloc(size);
       if (!newptr) {
         return NULL;
@@ -505,7 +502,7 @@ void * allocator::realloc(void *ptr, size_t size) {
   }
   // std::cout<<"\nReturning original pointer as new alignedSize == original aligned size of memory block.";
   return ptr;
-  
+
 }
 
 // call mem_reset_brk.

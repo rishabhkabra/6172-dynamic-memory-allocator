@@ -14,7 +14,7 @@
  *  -----------------------------------------------------------------------
  *  SYS_MULTI_THREAD=1  Test with multiple threads (OS/2, NT, HP, Solaris only)
  *  SYS_SMP=1           Test with multiple processors (NT, HP-UX, Solaris only)
- * 
+ *
  *
  */
 
@@ -113,7 +113,7 @@ typedef pthread_t ThreadID;
 #define INCL_DOSERRORS     /* Get memory error codes */
 #include <os2.h>
 #include <bsememf.h>      /* Get flags for memory management */
-typedef TID ThreadID; 
+typedef TID ThreadID;
 #endif /* _MT */
 
 #endif /* end of environment-specific header files */
@@ -175,7 +175,7 @@ int main(int argc, char *argv[])
 {
   Timer startTime;
 	double elapsedTime;
-	
+
 	setbuf(stdout, NULL);  /* turn off buffering for output */
 
 #ifdef SMARTHEAP
@@ -222,7 +222,7 @@ int main(int argc, char *argv[])
 		}
 #endif /* WIN32 && SMP */
 #endif
-		
+
 		uThreadCount = (int)promptAndRead("threads", 2, 'u');
 
 		if (uThreadCount < 1)
@@ -241,9 +241,9 @@ int main(int argc, char *argv[])
 			printf("\nfailed to start thread #%d", i);
 			break;
 		      } else {
-			printf ("\ncreated thread id %d.", tids[i]);
+			printf ("\ncreated thread %d.", i);
 		      }
-		  
+
 		  WaitForThreads(tids, uThreadCount);
 		}
 
@@ -318,11 +318,11 @@ void Benchmark(AllocArray *arr)
 //					unsigned size = randSize();
 //					char *mem = new char[size];
 					char *mem = (char *)malloc(size+1);
-					
+
 					if (mem)
 						AddAlloc(arr, mem, size);
 				}
-//				break;				
+//				break;
 		}
 	}
 }
@@ -346,7 +346,7 @@ AllocRec *GetAlloc(AllocArray *a)
 //		return &a->allocArray[(unsigned)(rand() + rand()) % a->count];
 		return &a->allocArray[a->count-1];
 	else
-		return NULL; 
+		return NULL;
 }
 
 unsigned randSize()
@@ -382,7 +382,7 @@ unsigned long promptAndRead(char *msg, unsigned long defaultVal, char fmtCh)
 ThreadID RunThread(void (*fn)(void *), void *arg)
 {
 	ThreadID result = THREAD_NULL;
-	
+
 #if defined(__OS2__) && (defined(__IBMC__) || defined(__IBMCPP__) || defined(__WATCOMC__))
 	if ((result = _beginthread(fn, NULL, 8192, arg)) == THREAD_NULL)
 		return THREAD_NULL;
@@ -434,7 +434,7 @@ void WaitForThreads(ThreadID tids[], unsigned tidCnt)
 	thr_setprio(thr_self(), newPrio);
 	while (tidCnt--)
 		thr_join(0, NULL, NULL);
-	
+
 #elif defined(_POSIX_THREADS) || defined(_POSIX_REENTRANT_FUNCTIONS) \
 	|| _POSIX_C_SOURCE >= 199506L
  	while (tidCnt--)
