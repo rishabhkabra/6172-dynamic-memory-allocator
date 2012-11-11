@@ -46,11 +46,11 @@ echo "
 ./validate.py ./larson-validate 10 7 8 1000 10000 6172 12"
 ./validate.py ./larson-validate 10 7 8 1000 10000 6172 12
 echo "
-./validate.py ./linux-scalability-validate 8 10000000 1"
-./validate.py ./linux-scalability-validate 8 10000000 1
+./validate.py ./linux-scalability-validate 8 1000000 1"
+./validate.py ./linux-scalability-validate 8 1000000 1
 echo "
-./validate.py ./linux-scalability-validate 8 10000000 12"
-./validate.py ./linux-scalability-validate 8 10000000 12
+./validate.py ./linux-scalability-validate 8 1000000 12"
+./validate.py ./linux-scalability-validate 8 1000000 12
 echo "
-./validate.py ./linux-scalability-validate 999 10000000 12"
-./validate.py ./linux-scalability-validate 999 10000000 12
+./validate.py ./linux-scalability-validate 999 1000000 12"
+./validate.py ./linux-scalability-validate 999 1000000 12
