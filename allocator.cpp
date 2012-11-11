@@ -46,17 +46,17 @@ namespace my {
 // block points to either the beginning of the next block, or the end of the
 // heap.
 
-struct ThreadSharedInfo {
-  pthread_mutex_t localLock;
-  void * unbinnedBlocks;
-};
-
 struct MemoryBlock {
-  ThreadSharedInfo * threadInfo;
+  void * threadInfo;
   MemoryBlock * nextFreeBlock; // pointer to the next free block in the binned free list that this belongs to.
   MemoryBlock * previousFreeBlock; // pointer to the previous free block in the binned free list that this belongs to.
   uint32_t size; // size is the entire block size, including the header and the footer
   bool isFree;;
+};
+
+struct ThreadSharedInfo {
+  pthread_mutex_t localLock;
+  MemoryBlock * unbinnedBlocks;
 };
 
 typedef uint32_t MemoryBlockFooter;
@@ -76,7 +76,7 @@ void * endOfHeap;
 pthread_mutex_t globalLock;
 pthread_mutexattr_t globalLockAttr;
 __thread MemoryBlock * bins[NUM_OF_BINS];
-__thread ThreadSharedInfo sharedInfo;
+__thread ThreadSharedInfo currentThreadInfo;
 __thread bool isInitialized = false;
 
 
@@ -171,8 +171,8 @@ static inline void threadInit() {
     //    std::cout<<"\n\tbins["<<i<<"] is located at "<<&bins[i];
     bins[i] = 0;
   }
-  sharedInfo.unbinnedBlocks = 0;
-  pthread_mutex_init(&(sharedInfo.localLock), NULL);
+  currentThreadInfo.unbinnedBlocks = 0;
+  pthread_mutex_init(&(currentThreadInfo.localLock), NULL);
   //  std::cout<<"\nThread local mutex located at "<<&localLock;
   //  std::cout<<"\ntlsKey located at "<<&tlsKey;
   isInitialized = true;
@@ -312,14 +312,13 @@ void * allocator::malloc(size_t size) {
 }
 
 void allocator::free(void *ptr) {
-  return;
-  GLOBAL_LOCK;
   //std::cout<<"\n\nAsked to free space at "<<ptr;
   MemoryBlock * mb;
   mb = INTERNAL_SPACE_ADDRESS_TO_MB_ADDRESS(ptr);
   assert(mb->nextFreeBlock == 0 && mb->previousFreeBlock == 0);
   mb->isFree = true;
-  
+  return;
+  GLOBAL_LOCK;
   // Coalesce with free blocks on the right
   MemoryBlock * nextMB = (MemoryBlock *) ((char *) mb + mb->size);
   size_t totalFree = 0;
