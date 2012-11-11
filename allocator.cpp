@@ -146,10 +146,12 @@ int allocator::check() {
       printf("Memory space contains a block at %p that does not have a correctly assigned footer\n", locMB);
       return -1;
     }
+    /*
     if(locMB->threadInfo != (void *) &currentThreadInfo) { // TODO: must remove for parallel runs
       printf("Memory space contains a block at %p that does not have correctly assigned threadInfo\n", locMB);
       return -1;
     }
+    */
   }
   
   return 0;
@@ -165,6 +167,7 @@ int allocator::init() {
   GLOBAL_LOCK;
   endOfHeap = mem_heap_lo();
   memoryStart = endOfHeap;
+  isInitialized = false;
   GLOBAL_UNLOCK;
   return 0;
 }
@@ -237,11 +240,15 @@ static inline void assignBlockToThreadSpecificUnbinnedList(MemoryBlock * mb) {
   assert(mb->isFree);
   assert(mb->threadInfo);
   ThreadSharedInfo * mbThreadInfo = (ThreadSharedInfo *) mb->threadInfo;
-  if (!mbThreadInfo->unbinnedBlocks) {
-    mbThreadInfo->unbinnedBlocks = mb;
+  pthread_mutex_lock(&(mbThreadInfo->localLock));
+  mb->nextFreeBlock = mbThreadInfo->unbinnedBlocks;
+  if (mbThreadInfo->unbinnedBlocks) {
+    assert(mbThreadInfo->unbinnedBlocks->previousFreeBlock == 0);
+    mbThreadInfo->unbinnedBlocks->previousFreeBlock = mb;
   }
-  mb->previousFreeBlock = 0;
-  mb->nextFreeBlock = 0;
+  mb->previousFreeBlock = 0;   
+  mbThreadInfo->unbinnedBlocks = mb;
+  pthread_mutex_unlock(&(mbThreadInfo->localLock));
 }
 
 static inline void removeBlockFromBinnedList (MemoryBlock * mb, int i) {
@@ -274,7 +281,22 @@ static inline void truncateMemoryBlock (MemoryBlock * mb, size_t new_size) {
   }
 }
 
-static inline void binAllUnbinnedBlocks() {
+static inline void binAllUnbinnedBlocks() {  
+  pthread_mutex_lock(&(currentThreadInfo.localLock));
+  MemoryBlock * mb = currentThreadInfo.unbinnedBlocks;
+  MemoryBlock * nextMB;
+  if (mb) {
+    assert(mb->isFree);
+    assert(mb->threadInfo == (void *) &currentThreadInfo);
+    mb->previousFreeBlock = 0;
+    mb->nextFreeBlock = 0;
+    nextMB = mb;
+    assignBlockToBinnedList(mb);
+    //std::cout<<"\nRemoved block ("<<currentThreadInfo.unbinnedBlocks<<") from unbinned list and binned it.";
+    mb = nextMB;
+  }
+  currentThreadInfo.unbinnedBlocks = 0;
+  pthread_mutex_unlock(&(currentThreadInfo.localLock));
 }
 
   //  malloc - Allocate a block by incrementing the brk pointer.
@@ -294,7 +316,7 @@ void * allocator::malloc(size_t size) {
     currentLoc = bins[i]; //currentLoc is set to the first element in the binned free list
     currentLocMB = (MemoryBlock *) bins[i];
     //std::cout<<"\nChecking bin "<<i<<" whose first free block is "<<bins[i];
-    while (currentLoc && currentLoc != endOfHeap) { // TODO: remove 2nd condition later
+    while (currentLoc) {
       if (currentLocMB->size >= alignedSize) {
         truncateMemoryBlock(currentLocMB, alignedSize);
         removeBlockFromBinnedList(currentLocMB, i);
