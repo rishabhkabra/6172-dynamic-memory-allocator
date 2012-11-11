@@ -275,7 +275,7 @@ static inline void truncateMemoryBlock (MemoryBlock * mb, size_t new_size) {
     nextBlock->isFree = true;
     nextBlock->threadInfo = mb->threadInfo;
     assignBlockFooter(nextBlock);
-    assignBlockToBinnedList(nextBlock);
+    assignBlockToThreadSpecificUnbinnedList(nextBlock);
     mb->size = new_size;
     assignBlockFooter(mb);
   }
@@ -284,13 +284,53 @@ static inline void truncateMemoryBlock (MemoryBlock * mb, size_t new_size) {
 static inline void binAllUnbinnedBlocks() {  
   pthread_mutex_lock(&(currentThreadInfo.localLock));
   MemoryBlock * mb = currentThreadInfo.unbinnedBlocks;
-  MemoryBlock * nextMB;
-  if (mb) {
+  MemoryBlock * nextMB, * prevMB;
+  size_t totalFree;
+  while (mb) {
     assert(mb->isFree);
     assert(mb->threadInfo == (void *) &currentThreadInfo);
+    mb->isFree = false;
+    mb = mb->nextFreeBlock;
+  }
+
+  mb = currentThreadInfo.unbinnedBlocks;
+  while (mb) {
+    // Coalesce with free blocks on the right
+    nextMB = (MemoryBlock *) ((char *) mb + mb->size);
+    totalFree = 0;
+    while(nextMB != endOfHeap && nextMB->threadInfo == mb->threadInfo && nextMB->isFree) {
+      totalFree += nextMB->size;
+      removeBlockFromBinnedList(nextMB, getBinIndex(nextMB->size));
+      nextMB = (MemoryBlock *) ((char *) nextMB + nextMB->size);
+    }
+    mb->size += totalFree;
+    assignBlockFooter(mb);
+    
+    nextMB = mb->nextFreeBlock;
+    /*
+    // Coalesce with free blocks on the left
+    if ((void *) mb > memoryStart) {
+      assert((void *) mb >= (void *)((char *) memoryStart + TOTAL_BLOCK_OVERHEAD));
+      MemoryBlockFooter * footer = MB_ADDRESS_TO_PREVIOUS_FOOTER_ADDRESS(mb);
+      prevMB = (MemoryBlock *) ((char *) mb - *footer);
+      totalFree = mb->size;
+      while ((void *) prevMB >= memoryStart && prevMB->threadInfo == mb->threadInfo && prevMB->isFree) { // could remove first boolean predicate
+        totalFree += prevMB->size;
+        removeBlockFromBinnedList(prevMB, getBinIndex(prevMB->size));
+        mb = prevMB;
+        if ((void *) prevMB == memoryStart) {
+          break;
+        }
+        footer = MB_ADDRESS_TO_PREVIOUS_FOOTER_ADDRESS(prevMB);
+        prevMB = (MemoryBlock *) ((char *) prevMB - *footer);
+      }
+      mb->size = totalFree;
+      assignBlockFooter(mb);  
+    }
+    */
     mb->previousFreeBlock = 0;
     mb->nextFreeBlock = 0;
-    nextMB = mb;
+    mb->isFree = true;
     assignBlockToBinnedList(mb);
     //std::cout<<"\nRemoved block ("<<currentThreadInfo.unbinnedBlocks<<") from unbinned list and binned it.";
     mb = nextMB;
@@ -362,51 +402,6 @@ void allocator::free(void *ptr) {
   assignBlockToThreadSpecificUnbinnedList(mb);
   return;
   GLOBAL_LOCK;
-  // Coalesce with free blocks on the right
-  MemoryBlock * nextMB = (MemoryBlock *) ((char *) mb + mb->size);
-  size_t totalFree = 0;
-  while(nextMB != endOfHeap && nextMB->isFree) {
-    totalFree += nextMB->size;
-    removeBlockFromBinnedList(nextMB, getBinIndex(nextMB->size));
-    // is it also necessary to reset nextMB's footer?
-    nextMB = (MemoryBlock *) ((char *) nextMB + nextMB->size);
-  }
-  mb->size += totalFree;
-  assignBlockFooter(mb);
-  
-  // Coalesce with free blocks on the left
-  if ((void *) mb > memoryStart) {
-    assert((void *) mb >= (void *)((char *) memoryStart + TOTAL_BLOCK_OVERHEAD));
-    MemoryBlockFooter * footer = MB_ADDRESS_TO_PREVIOUS_FOOTER_ADDRESS(mb);
-    MemoryBlock * prevMB = (MemoryBlock *) ((char *) mb - *footer);
-    totalFree = mb->size;
-    //bool entered = false;
-    while (prevMB && (void *) prevMB >= memoryStart && prevMB->isFree) { // could remove first boolean predicate
-      //entered = true;
-      totalFree += prevMB->size;
-      removeBlockFromBinnedList(prevMB, getBinIndex(prevMB->size));
-      mb = prevMB;
-      if ((void *) prevMB == memoryStart) {
-        break;
-      }
-      footer = MB_ADDRESS_TO_PREVIOUS_FOOTER_ADDRESS(prevMB);
-      prevMB = (MemoryBlock *) ((char *) prevMB - *footer);
-    }
-    /*
-      if (entered) {
-      std::cout<<"\n\nSuccessful left coalesce. Size of block before was: "<<mb->size<<". State of memory before coalesce: ";
-      printStateOfMemory();
-      }
-    */
-    mb->size = totalFree;
-    assignBlockFooter(mb);
-    /*
-      if (entered) {
-      std::cout<<"\nNew size of block: "<<mb->size<<". New state of memory: ";
-      printStateOfMemory();
-      }
-    */
-  }
   assignBlockToBinnedList(mb);
   GLOBAL_UNLOCK;
 }
