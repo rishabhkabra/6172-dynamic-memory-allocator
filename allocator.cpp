@@ -232,6 +232,18 @@ static inline void assignBlockToBinnedList(MemoryBlock * mb) {
   bins[index] = mb;
 }
 
+static inline void assignBlockToThreadSpecificUnbinnedList(MemoryBlock * mb) {
+  assert(mb);
+  assert(mb->isFree);
+  assert(mb->threadInfo);
+  ThreadSharedInfo * mbThreadInfo = (ThreadSharedInfo *) mb->threadInfo;
+  if (!mbThreadInfo->unbinnedBlocks) {
+    mbThreadInfo->unbinnedBlocks = mb;
+  }
+  mb->previousFreeBlock = 0;
+  mb->nextFreeBlock = 0;
+}
+
 static inline void removeBlockFromBinnedList (MemoryBlock * mb, int i) {
   assert (mb != 0);
   if (mb->previousFreeBlock) {
@@ -262,7 +274,7 @@ static inline void truncateMemoryBlock (MemoryBlock * mb, size_t new_size) {
   }
 }
 
-static inline void binAllUnbinnedBlocks(){
+static inline void binAllUnbinnedBlocks() {
 }
 
   //  malloc - Allocate a block by incrementing the brk pointer.
@@ -325,6 +337,7 @@ void allocator::free(void *ptr) {
   assert(!mb->isFree);
   assert(mb->nextFreeBlock == 0 && mb->previousFreeBlock == 0);
   mb->isFree = true;
+  assignBlockToThreadSpecificUnbinnedList(mb);
   return;
   GLOBAL_LOCK;
   // Coalesce with free blocks on the right
