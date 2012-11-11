@@ -137,13 +137,17 @@ int allocator::check() {
         }
   */
   
-  // Check that all memory blocks in managed space have correctly set footers
+  // Check that all memory blocks in managed space have correctly set footers and threadInfo
   MemoryBlockFooter * footer;
   for (locMB = (MemoryBlock *) memoryStart; locMB && locMB !=endOfHeap; locMB = (MemoryBlock *) ((char *) locMB + locMB->size))
   {
     footer = MB_ADDRESS_TO_OWN_FOOTER_ADDRESS(locMB);
     if (locMB->size != *footer) {
       printf("Memory space contains a block at %p that does not have a correctly assigned footer\n", locMB);
+      return -1;
+    }
+    if(locMB->threadInfo != (void *) &currentThreadInfo) { // TODO: must remove for parallel runs
+      printf("Memory space contains a block at %p that does not have correctly assigned threadInfo\n", locMB);
       return -1;
     }
   }
@@ -250,6 +254,7 @@ static inline void truncateMemoryBlock (MemoryBlock * mb, size_t new_size) {
     MemoryBlock * nextBlock = (MemoryBlock *)((char *)mb + new_size);
     nextBlock->size = mb->size - new_size;
     nextBlock->isFree = true;
+    nextBlock->threadInfo = mb->threadInfo;
     assignBlockFooter(nextBlock);
     assignBlockToBinnedList(nextBlock);
     mb->size = new_size;
@@ -284,6 +289,7 @@ void * allocator::malloc(size_t size) {
         currentLocMB->nextFreeBlock = 0;
         currentLocMB->previousFreeBlock = 0;
         currentLocMB->isFree = false;
+        assert(currentLocMB->threadInfo == (void *) &currentThreadInfo);
         return MB_ADDRESS_TO_INTERNAL_SPACE_ADDRESS(currentLoc);
       }
       currentLocMB = currentLocMB->nextFreeBlock;
@@ -306,6 +312,7 @@ void * allocator::malloc(size_t size) {
   currentLocMB->nextFreeBlock = 0;
   currentLocMB->previousFreeBlock = 0;
   currentLocMB->size = alignedSize;
+  currentLocMB->threadInfo = (void *) &currentThreadInfo;
   currentLocMB->isFree = false;
   assignBlockFooter(currentLocMB);
   return MB_ADDRESS_TO_INTERNAL_SPACE_ADDRESS(currentLoc);
