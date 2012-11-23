@@ -65,7 +65,7 @@ typedef uint32_t MemoryBlockFooter;
 #define BIN_INDEX_THRESHOLD 1024
 #define NUM_OF_BINS 150
 #define FREE_BLOCK_SPLIT_THRESHOLD 8
-
+#define MEM_SBRK_ADDITIONAL_REQUEST_AMOUNT 0
 #define MB_ADDRESS_TO_INTERNAL_SPACE_ADDRESS(mbptr) ((void *) ((char *)(mbptr) + sizeof(MemoryBlock))) // given a MemoryBlock pointer mbptr, returns the internal space address that should be visible to the user
 #define MB_ADDRESS_TO_OWN_FOOTER_ADDRESS(mbptr) (MemoryBlockFooter *) ((char *) (mbptr) + (mbptr)->size - sizeof(MemoryBlockFooter))
 #define MB_ADDRESS_TO_PREVIOUS_FOOTER_ADDRESS(mbptr) (MemoryBlockFooter *)((char *) (mbptr) - sizeof(MemoryBlockFooter))
@@ -82,6 +82,27 @@ __thread bool isInitialized = false;
 
 #define GLOBAL_LOCK pthread_mutex_lock(&globalLock)
 #define GLOBAL_UNLOCK pthread_mutex_unlock(&globalLock)
+
+const uint64_t deBruijn = 0x022fdd63cc95386d;
+const unsigned int convert[64] = {
+  0, 1, 2, 53, 3, 7, 54, 27,
+  4, 38, 41, 8, 34, 55, 48, 28,
+  62, 5, 39, 46, 44, 42, 22, 9,
+  24, 35, 59, 56, 49, 18, 29, 11,
+  63, 52, 6, 26, 37, 40, 33, 47,
+  61, 45, 43, 21, 23, 58, 17, 10,
+  51, 25, 36, 32, 60, 20, 57, 16,
+  50, 31, 19, 15, 30, 14, 13, 12 };
+
+int lgFloor(uint32_t n) {
+  n |= n >> 1;
+  n |= n >> 2;
+  n |= n >> 4;
+  n |= n >> 8;
+  n |= n >> 16;
+  n = (n + 1) >> 1;
+  return convert[(n * deBruijn) >> 58];
+}
 
 int allocator::check() {
   // Check that bins contain only free blocks
@@ -200,6 +221,7 @@ static inline int getBinIndex(uint32_t size) {
     return size / 8;
   }
   int returnIndex = floor(log2(size)) + 118;
+  // int returnIndex = lgFloor(size) + 118;
   return ((returnIndex >= NUM_OF_BINS) ? (NUM_OF_BINS - 1) : returnIndex);
 }
 
