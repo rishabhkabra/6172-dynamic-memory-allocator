@@ -509,6 +509,30 @@ void * allocator::realloc(void *ptr, size_t size) {
       return MB_ADDRESS_TO_INTERNAL_SPACE_ADDRESS(mb);
     }
     else {
+      GLOBAL_LOCK;
+      //std::cout<<"\n\nOriginal size = "<<(mb->size - TOTAL_BLOCK_OVERHEAD);
+      //std::cout<<"\nNew size requested = "<<size;
+      //std::cout<<"\nEnd of memory block = "<<((void *)((char *) mb + mb->size));
+      //std::cout<<"\nEnd of heap = "<<endOfHeap;
+      if ((char *) mb + mb->size == (char *) endOfHeap) {
+        size_t neededAllocation = alignedSize - mb->size;
+        void *p = mem_sbrk(neededAllocation); // increase
+        //std::cout<<"Smart realloc\n";
+        if (p == (void *) -1) {
+          GLOBAL_UNLOCK;
+          return NULL;
+        }
+        // currentLoc = endOfHeap;
+        endOfHeap += neededAllocation; // increase
+        GLOBAL_UNLOCK;
+        // currentLocMB = (MemoryBlock *) currentLoc;
+        // currentLocMB->nextFreeBlock = 0;
+        // currentLocMB->previousFreeBlock = 0;
+        mb->size = alignedSize;
+        assignBlockFooter(mb);
+        return MB_ADDRESS_TO_INTERNAL_SPACE_ADDRESS(mb);
+      }
+      GLOBAL_UNLOCK;
       void * newptr = malloc(size);
       if (!newptr) {
         return NULL;
