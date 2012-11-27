@@ -33,7 +33,7 @@ MDRIVER_OBJS:= \
 	libc_allocator.o \
 	mdriver.o
 
-BENCHMARKS:= cache-scratch.cpp cache-thrash.cpp larson.cpp linux-scalability.c
+BENCHMARKS:= cache-scratch.cpp cache-thrash.cpp larson.cpp linux-scalability.c growvector.cpp
 
 # Blank line ends list.
 
