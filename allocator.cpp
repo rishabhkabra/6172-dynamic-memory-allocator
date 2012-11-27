@@ -220,8 +220,8 @@ static inline int getBinIndex(uint32_t size) {
   if (size < BIN_INDEX_THRESHOLD) {
     return size / 8;
   }
-  int returnIndex = floor(log2(size)) + 118;
-  // int returnIndex = lgFloor(size) + 118;
+  int returnIndex = lgFloor(size) + 118;
+  assert(floor(log2(size)) + 118 == returnIndex);
   return ((returnIndex >= NUM_OF_BINS) ? (NUM_OF_BINS - 1) : returnIndex);
 }
 
