@@ -324,6 +324,9 @@ static inline void truncateMemoryBlock (MemoryBlock * mb, size_t new_size) {
 }
 
 static inline void binAllUnbinnedBlocks() {
+  if (!currentThreadInfo.unbinnedBlocks) {
+    return;
+  }
   pthread_mutex_lock(&(currentThreadInfo.localLock));
   MemoryBlock * mb = currentThreadInfo.unbinnedBlocks;
   MemoryBlock * nextMB, * prevMB;
@@ -457,7 +460,12 @@ void allocator::free(void *ptr) {
   assert(!mb->isFree);
   assert(mb->nextFreeBlock == 0 && mb->previousFreeBlock == 0);
   mb->isFree = true;
-  assignBlockToThreadSpecificUnbinnedList(mb);
+  if (mb->threadInfo == &currentThreadInfo) {
+    assignBlockToBinnedList(mb);
+  }
+  else {
+    assignBlockToThreadSpecificUnbinnedList(mb);
+  }
   return;
 }
 
