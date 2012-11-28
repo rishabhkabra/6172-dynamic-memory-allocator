@@ -48,10 +48,10 @@ namespace my {
 
 struct MemoryBlock {
   void * threadInfo;
+  uint32_t size; // size is the entire block size, including the header and the footer
+  bool isFree;
   MemoryBlock * nextFreeBlock; // pointer to the next free block in the binned free list that this belongs to.
   MemoryBlock * previousFreeBlock; // pointer to the previous free block in the binned free list that this belongs to.
-  uint32_t size; // size is the entire block size, including the header and the footer
-  bool isFree;;
 };
 
 struct ThreadSharedInfo {
@@ -61,15 +61,18 @@ struct ThreadSharedInfo {
 
 typedef uint32_t MemoryBlockFooter;
 
-#define TOTAL_BLOCK_OVERHEAD (sizeof(MemoryBlock) + sizeof(MemoryBlockFooter))
+#define FREE_BLOCK_OVERHEAD (sizeof(MemoryBlock) + sizeof(MemoryBlockFooter))
+#define ALLOCATED_BLOCK_OVERHEAD (FREE_BLOCK_OVERHEAD - 2 * sizeof(MemoryBlock *))
+#define MINIMUM_ALLOCATED_BLOCK_SIZE ALIGN(FREE_BLOCK_OVERHEAD)
+
 #define BIN_INDEX_THRESHOLD 1024
 #define NUM_OF_BINS 150
 #define FREE_BLOCK_SPLIT_THRESHOLD 8
 #define MEM_SBRK_ADDITIONAL_REQUEST_AMOUNT 0
-#define MB_ADDRESS_TO_INTERNAL_SPACE_ADDRESS(mbptr) ((void *) ((char *)(mbptr) + sizeof(MemoryBlock))) // given a MemoryBlock pointer mbptr, returns the internal space address that should be visible to the user
+#define MB_ADDRESS_TO_INTERNAL_SPACE_ADDRESS(mbptr) ((void *) ((char *)(mbptr) + sizeof(MemoryBlock) - 2 * sizeof(MemoryBlock *))) // given a MemoryBlock pointer mbptr, returns the internal space address that should be visible to the user
 #define MB_ADDRESS_TO_OWN_FOOTER_ADDRESS(mbptr) (MemoryBlockFooter *) ((char *) (mbptr) + (mbptr)->size - sizeof(MemoryBlockFooter))
 #define MB_ADDRESS_TO_PREVIOUS_FOOTER_ADDRESS(mbptr) (MemoryBlockFooter *)((char *) (mbptr) - sizeof(MemoryBlockFooter))
-#define INTERNAL_SPACE_ADDRESS_TO_MB_ADDRESS(ptr) (MemoryBlock *) ((char *) (ptr) - sizeof(MemoryBlock))
+#define INTERNAL_SPACE_ADDRESS_TO_MB_ADDRESS(ptr) (MemoryBlock *) ((char *) (ptr) + 2 * sizeof(MemoryBlock *) - sizeof(MemoryBlock))
 
 void * memoryStart; //is always mem_heap_lo
 void * endOfHeap;
@@ -175,9 +178,17 @@ int allocator::check() {
   MemoryBlockFooter * footer;
   for (locMB = (MemoryBlock *) memoryStart; locMB && locMB !=endOfHeap; locMB = (MemoryBlock *) ((char *) locMB + locMB->size))
   {
+    /*
+    std::cout<<"\n\nMemoryBlock address: "<<((void *) locMB);
+    std::cout<<"\nthreadInfo address: "<<((void *) &(locMB->threadInfo));
+    std::cout<<"\nsize address: "<<((void *) &(locMB->size));
+    std::cout<<"\nisFree address: "<<((void *) &(locMB->isFree));
+    std::cout<<"\nnextFreeAddress: "<<((void *) &(locMB->nextFreeBlock));
+    */
     footer = MB_ADDRESS_TO_OWN_FOOTER_ADDRESS(locMB);
     if (locMB->size != *footer) {
       printf("Memory space contains a block at %p that does not have a correctly assigned footer\n", locMB);
+      //printStateOfMemory();
       return -1;
     }
     /*
@@ -187,7 +198,6 @@ int allocator::check() {
     }
     */
   }
-
   return 0;
 }
 
@@ -203,6 +213,9 @@ int allocator::init() {
   memoryStart = endOfHeap;
   isInitialized = false;
   GLOBAL_UNLOCK;
+  //std::cout<<"\nMemory block size = "<<sizeof(MemoryBlock);
+  //std::cout<<"\nFREE-BLOCK-OVERHEAD = "<<FREE_BLOCK_OVERHEAD;
+  //std::cout<<"\nALLOCATED-BLOCK-OVERHEAD = "<<ALLOCATED_BLOCK_OVERHEAD;
   return 0;
 }
 
@@ -251,6 +264,7 @@ static inline void printStateOfBins() {
 
 static inline void printStateOfMemory() {
   MemoryBlock * mb = (MemoryBlock *) memoryStart;
+  //MemoryBlockFooter * footer;
   std::cout<<"\n";
   while (mb && mb != endOfHeap) {
     if (mb->isFree) {
@@ -258,6 +272,12 @@ static inline void printStateOfMemory() {
     } else {
       std::cout<<"["<<mb->size<<"]";
     }
+    //footer = MB_ADDRESS_TO_OWN_FOOTER_ADDRESS(mb);
+    /*
+    if (mb->size != *footer) {
+      std::cout<<"*"<<(*footer)<<"*";
+    }
+    */
     mb = (MemoryBlock *) ((char *) mb + mb->size);
   }
 }
@@ -310,7 +330,7 @@ static inline void assignBlockFooter (MemoryBlock * mb) {
 
 static inline void truncateMemoryBlock (MemoryBlock * mb, size_t new_size) {
   assert(mb);
-  if (mb->size > new_size + TOTAL_BLOCK_OVERHEAD + FREE_BLOCK_SPLIT_THRESHOLD) {
+  if (mb->size > new_size + FREE_BLOCK_OVERHEAD + FREE_BLOCK_SPLIT_THRESHOLD) {
     assert(mb->threadInfo);
     MemoryBlock * nextBlock = (MemoryBlock *)((char *)mb + new_size);
     nextBlock->size = mb->size - new_size;
@@ -367,7 +387,7 @@ static inline void binAllUnbinnedBlocks() {
 
     // Coalesce with free blocks on the left
     if ((void *) mb > memoryStart) {
-      assert((void *) mb >= (void *)((char *) memoryStart + TOTAL_BLOCK_OVERHEAD));
+      assert((void *) mb >= (void *)((char *) memoryStart + ALLOCATED_BLOCK_OVERHEAD));
       MemoryBlockFooter * footer = MB_ADDRESS_TO_PREVIOUS_FOOTER_ADDRESS(mb);
       prevMB = (MemoryBlock *) ((char *) mb - *footer);
       totalFree = mb->size;
@@ -407,7 +427,8 @@ void * allocator::malloc(size_t size) {
     threadInit();
   }
   void * currentLoc;
-  size_t alignedSize = ALIGN(size + TOTAL_BLOCK_OVERHEAD);
+  size_t alignedSize = ALIGN(size + ALLOCATED_BLOCK_OVERHEAD);
+  alignedSize = (alignedSize > MINIMUM_ALLOCATED_BLOCK_SIZE)? alignedSize : MINIMUM_ALLOCATED_BLOCK_SIZE;
   MemoryBlock * currentLocMB;
   int i = getBinIndex(alignedSize);
   binAllUnbinnedBlocks();
@@ -421,8 +442,8 @@ void * allocator::malloc(size_t size) {
       if (currentLocMB->size >= alignedSize) {
         truncateMemoryBlock(currentLocMB, alignedSize);
         removeBlockFromLinkedList(currentLocMB, bins[i]);
-        currentLocMB->nextFreeBlock = 0;
-        currentLocMB->previousFreeBlock = 0;
+        // currentLocMB->nextFreeBlock = 0;
+        // currentLocMB->previousFreeBlock = 0;
         currentLocMB->isFree = false;
         assert(currentLocMB->threadInfo == (void *) &currentThreadInfo);
         return MB_ADDRESS_TO_INTERNAL_SPACE_ADDRESS(currentLoc);
@@ -444,8 +465,8 @@ void * allocator::malloc(size_t size) {
   endOfHeap += alignedSize; // increase
   GLOBAL_UNLOCK;
   currentLocMB = (MemoryBlock *) currentLoc;
-  currentLocMB->nextFreeBlock = 0;
-  currentLocMB->previousFreeBlock = 0;
+  // currentLocMB->nextFreeBlock = 0;
+  // currentLocMB->previousFreeBlock = 0;
   currentLocMB->size = alignedSize;
   currentLocMB->threadInfo = (void *) &currentThreadInfo;
   currentLocMB->isFree = false;
@@ -458,7 +479,7 @@ void allocator::free(void *ptr) {
   MemoryBlock * mb;
   mb = INTERNAL_SPACE_ADDRESS_TO_MB_ADDRESS(ptr);
   assert(!mb->isFree);
-  assert(mb->nextFreeBlock == 0 && mb->previousFreeBlock == 0);
+  // assert(mb->nextFreeBlock == 0 && mb->previousFreeBlock == 0);
   mb->isFree = true;
   if (mb->threadInfo == &currentThreadInfo) {
     assignBlockToBinnedList(mb);
@@ -486,7 +507,8 @@ void * allocator::realloc(void *ptr, size_t size) {
   // std::cout<<"\n\nAsked to reallocate block at "<<ptr;
   MemoryBlock * mb = INTERNAL_SPACE_ADDRESS_TO_MB_ADDRESS(ptr);
   // std::cout<<" that had an internal size of "<<mb->size - TOTAL_BLOCK_OVERHEAD<<", an aligned size (incl. overhead) of "<<mb->size<<", and a new requested size of "<<size;
-  size_t alignedSize = ALIGN(size + TOTAL_BLOCK_OVERHEAD);
+  size_t alignedSize = ALIGN(size + ALLOCATED_BLOCK_OVERHEAD);
+  alignedSize = (alignedSize > MINIMUM_ALLOCATED_BLOCK_SIZE)? alignedSize : MINIMUM_ALLOCATED_BLOCK_SIZE;
   // std::cout<<"\nOriginal state of memory: ";
   // printStateOfMemory();
 
@@ -545,7 +567,7 @@ void * allocator::realloc(void *ptr, size_t size) {
       if (!newptr) {
         return NULL;
       }
-      size_t copy_size = mb->size - TOTAL_BLOCK_OVERHEAD; // internal size of the original memory block
+      size_t copy_size = mb->size - ALLOCATED_BLOCK_OVERHEAD; // internal size of the original memory block
       copy_size = (size < copy_size)? size : copy_size; // if the new size is less that the original internal size, we MUST NOT copy more than new size bytes to the new block
       std::memcpy(newptr, ptr, copy_size);
       free(ptr);
