@@ -65,7 +65,7 @@ typedef uint32_t MemoryBlockFooter;
 #define BIN_INDEX_THRESHOLD 1024
 #define NUM_OF_BINS 150
 #define FREE_BLOCK_SPLIT_THRESHOLD 8
-#define MEM_SBRK_ADDITIONAL_REQUEST_AMOUNT 0
+#define MEM_SBRK_REQUEST_FACTOR 64
 #define MB_ADDRESS_TO_INTERNAL_SPACE_ADDRESS(mbptr) ((void *) ((char *)(mbptr) + sizeof(MemoryBlock))) // given a MemoryBlock pointer mbptr, returns the internal space address that should be visible to the user
 #define MB_ADDRESS_TO_OWN_FOOTER_ADDRESS(mbptr) (MemoryBlockFooter *) ((char *) (mbptr) + (mbptr)->size - sizeof(MemoryBlockFooter))
 #define MB_ADDRESS_TO_PREVIOUS_FOOTER_ADDRESS(mbptr) (MemoryBlockFooter *)((char *) (mbptr) - sizeof(MemoryBlockFooter))
@@ -206,14 +206,7 @@ int allocator::init() {
   return 0;
 }
 
-static inline void threadInit() {
-  for (int i = 0; i < NUM_OF_BINS; i++) {
-    bins[i] = 0;
-  }
-  currentThreadInfo.unbinnedBlocks = 0;
-  pthread_mutex_init(&(currentThreadInfo.localLock), NULL);
-  isInitialized = true;
-}
+
 
 static inline int getBinIndex(uint32_t size) {
   assert (size > 0);
@@ -400,6 +393,31 @@ static inline void binAllUnbinnedBlocks() {
   pthread_mutex_unlock(&(currentThreadInfo.localLock));
 }
 
+
+static inline void threadInit() {
+  for (int i = 0; i < NUM_OF_BINS; i++) {
+    bins[i] = 0;
+  }
+  currentThreadInfo.unbinnedBlocks = 0;
+  pthread_mutex_init(&(currentThreadInfo.localLock), NULL);
+  MemoryBlock * mb;
+  GLOBAL_LOCK;
+  void *p = mem_sbrk(MEM_SBRK_REQUEST_FACTOR); // increase
+  if (p == (void *) -1) {
+    GLOBAL_UNLOCK;
+    return;
+  }
+  mb = (MemoryBlock *) endOfHeap;
+  endOfHeap += MEM_SBRK_REQUEST_FACTOR; // increase
+  GLOBAL_UNLOCK;
+  mb->size = MEM_SBRK_REQUEST_FACTOR;
+  mb->threadInfo = (void *) &currentThreadInfo;
+  mb->isFree = true;
+  assignBlockFooter(mb);
+  assignBlockToBinnedList(mb);
+  isInitialized = true;
+}
+
   //  malloc - Allocate a block by incrementing the brk pointer.
   //  Always allocate a block whose size is a multiple of the alignment.
 void * allocator::malloc(size_t size) {
@@ -408,6 +426,7 @@ void * allocator::malloc(size_t size) {
   }
   void * currentLoc;
   size_t alignedSize = ALIGN(size + TOTAL_BLOCK_OVERHEAD);
+//  printf("Request size: %zu\t aligned size: %zu\t thread: %p\n", size, alignedSize, &currentThreadInfo);
   MemoryBlock * currentLocMB;
   int i = getBinIndex(alignedSize);
   binAllUnbinnedBlocks();
@@ -462,8 +481,7 @@ void allocator::free(void *ptr) {
   mb->isFree = true;
   if (mb->threadInfo == &currentThreadInfo) {
     assignBlockToBinnedList(mb);
-  }
-  else {
+  } else {
     assignBlockToThreadSpecificUnbinnedList(mb);
   }
   return;
@@ -487,6 +505,7 @@ void * allocator::realloc(void *ptr, size_t size) {
   MemoryBlock * mb = INTERNAL_SPACE_ADDRESS_TO_MB_ADDRESS(ptr);
   // std::cout<<" that had an internal size of "<<mb->size - TOTAL_BLOCK_OVERHEAD<<", an aligned size (incl. overhead) of "<<mb->size<<", and a new requested size of "<<size;
   size_t alignedSize = ALIGN(size + TOTAL_BLOCK_OVERHEAD);
+//  printf("Realloc: request size: %zu\t aligned size: %zu\t thread: %p\n", size, alignedSize, &currentThreadInfo);
   // std::cout<<"\nOriginal state of memory: ";
   // printStateOfMemory();
 
