@@ -27,7 +27,7 @@
 #include <cstring>
 #include <cmath>
 #include <pthread.h>
-#include <iostream> // remove later
+#include <iostream>
 #include "./allocator_interface.h"
 #include "./memlib.h"
 #include "./benchmarks/cpuinfo.h"
@@ -42,46 +42,63 @@
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
 namespace my {
-// check - This checks our invariant that the size_t header before every
-// block points to either the beginning of the next block, or the end of the
-// heap.
 
+// A header that will precede every allocated memory block 
 struct MemoryBlock {
-  void * threadInfo;
-  uint32_t size; // size is the entire block size, including the header and the footer
-  bool isFree;
+  void * threadInfo; // a pointer to the shared information of the thread that owns this block
+  uint32_t size; // size of the entire memory block including the header and the footer
+  bool isFree; // flag indicating whether this memory block is in use or had been freed
   MemoryBlock * nextFreeBlock; // pointer to the next free block in the binned free list that this belongs to.
   MemoryBlock * previousFreeBlock; // pointer to the previous free block in the binned free list that this belongs to.
 };
 
+// Thread-specific variables that need to be shared with other threads
 struct ThreadSharedInfo {
   pthread_mutex_t localLock;
   MemoryBlock * unbinnedBlocks;
 };
 
+// A footer that will follow ever allocated memory block
 typedef uint32_t MemoryBlockFooter;
 
+// The book-keeping overhead (header + footer) on a freed memory block
 #define FREE_BLOCK_OVERHEAD (sizeof(MemoryBlock) + sizeof(MemoryBlockFooter))
+
+// The book-keeping overhead (header + footer) on an allocated memory block
 #define ALLOCATED_BLOCK_OVERHEAD (FREE_BLOCK_OVERHEAD - 2 * sizeof(MemoryBlock *))
+
+// The minimum total block size (including overhead) of any memory block that can allocated
 #define MINIMUM_ALLOCATED_BLOCK_SIZE ALIGN(FREE_BLOCK_OVERHEAD)
 
 #define BIN_INDEX_THRESHOLD 1024
 #define NUM_OF_BINS 150
+
+// A minimum threshold of gained free space for which a memory block will be truncated before it is allocated
 #define FREE_BLOCK_SPLIT_THRESHOLD 8
-#define MEM_SBRK_REQUEST_FACTOR 64
-#define MB_ADDRESS_TO_INTERNAL_SPACE_ADDRESS(mbptr) ((void *) ((char *)(mbptr) + sizeof(MemoryBlock) - 2 * sizeof(MemoryBlock *))) // given a MemoryBlock pointer mbptr, returns the internal space address that should be visible to the user
+
+// The initial amount of memory that is made available to a thread's local heap when a thread is initialized
+#define INITIAL_ALLOCATION_PER_THREAD 64
+
+// Formula which, given a MemoryBlock pointer, returns the internal space address (of the MemoryBlock) that should be visible to the user
+#define MB_ADDRESS_TO_INTERNAL_SPACE_ADDRESS(mbptr) ((void *) ((char *)(mbptr) + sizeof(MemoryBlock) - 2 * sizeof(MemoryBlock *)))
+
+// Formula which, given a MemoryBlock pointer, returns a pointer to the MemoryBlock's own footer
 #define MB_ADDRESS_TO_OWN_FOOTER_ADDRESS(mbptr) (MemoryBlockFooter *) ((char *) (mbptr) + (mbptr)->size - sizeof(MemoryBlockFooter))
+
+// Formula which, given a MemoryBlock pointer, returns a pointer to the preceding MemoryBlock's footer
 #define MB_ADDRESS_TO_PREVIOUS_FOOTER_ADDRESS(mbptr) (MemoryBlockFooter *)((char *) (mbptr) - sizeof(MemoryBlockFooter))
+
+// Formula which, given a pointer to the beginning of an internal allocated space, returns the corresponding MemoryBlock pointer
 #define INTERNAL_SPACE_ADDRESS_TO_MB_ADDRESS(ptr) (MemoryBlock *) ((char *) (ptr) + 2 * sizeof(MemoryBlock *) - sizeof(MemoryBlock))
 
-void * memoryStart; //is always mem_heap_lo
+void * memoryStart;
 void * endOfHeap;
 pthread_mutex_t globalLock;
 pthread_mutexattr_t globalLockAttr;
+
 __thread MemoryBlock * bins[NUM_OF_BINS];
 __thread ThreadSharedInfo currentThreadInfo;
 __thread bool isInitialized = false;
-
 
 #define GLOBAL_LOCK pthread_mutex_lock(&globalLock)
 #define GLOBAL_UNLOCK pthread_mutex_unlock(&globalLock)
@@ -107,6 +124,9 @@ int lgFloor(uint32_t n) {
   return convert[(n * deBruijn) >> 58];
 }
 
+// check - This checks our invariants that the size_t header before every
+// block points to either the beginning of the next block, or the end of the
+// heap.
 int allocator::check() {
   // Check that bins contain only free blocks
   MemoryBlock * locMB;
@@ -422,15 +442,15 @@ static inline void threadInit() {
   pthread_mutex_init(&(currentThreadInfo.localLock), NULL);
   MemoryBlock * mb;
   GLOBAL_LOCK;
-  void *p = mem_sbrk(MEM_SBRK_REQUEST_FACTOR); // increase
+  void *p = mem_sbrk(INITIAL_ALLOCATION_PER_THREAD); // increase
   if (p == (void *) -1) {
     GLOBAL_UNLOCK;
     return;
   }
   mb = (MemoryBlock *) endOfHeap;
-  endOfHeap += MEM_SBRK_REQUEST_FACTOR; // increase
+  endOfHeap += INITIAL_ALLOCATION_PER_THREAD; // increase
   GLOBAL_UNLOCK;
-  mb->size = MEM_SBRK_REQUEST_FACTOR;
+  mb->size = INITIAL_ALLOCATION_PER_THREAD;
   mb->threadInfo = (void *) &currentThreadInfo;
   mb->isFree = true;
   assignBlockFooter(mb);
