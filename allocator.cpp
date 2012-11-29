@@ -100,7 +100,10 @@ __thread MemoryBlock * bins[NUM_OF_BINS];
 __thread ThreadSharedInfo currentThreadInfo;
 __thread bool isInitialized = false;
 
+// Macro to acquire the global lock
 #define GLOBAL_LOCK pthread_mutex_lock(&globalLock)
+
+// Macro to release the global lock
 #define GLOBAL_UNLOCK pthread_mutex_unlock(&globalLock)
 
 const uint64_t deBruijn = 0x022fdd63cc95386d;
@@ -222,8 +225,7 @@ int allocator::init() {
   return 0;
 }
 
-
-
+// Helper method that calculates what bin a memory block should be assigned to as a function of its size
 static inline int getBinIndex(uint32_t size) {
   assert (size > 0);
   if (size < BIN_INDEX_THRESHOLD) {
@@ -234,6 +236,7 @@ static inline int getBinIndex(uint32_t size) {
   return ((returnIndex >= NUM_OF_BINS) ? (NUM_OF_BINS - 1) : returnIndex);
 }
 
+// Helper method that prints all free blocks present in bins (used for debugging)
 static inline void printStateOfBins() {
   std::cout<<"\nUnbinned: ";
   MemoryBlock * locMB = currentThreadInfo.unbinnedBlocks;
@@ -258,6 +261,7 @@ static inline void printStateOfBins() {
   }
 }
 
+// Helper method that prints all memory blocks, free or allocated, in the managed heap (used for debugging)
 static inline void printStateOfMemory() {
   MemoryBlock * mb = (MemoryBlock *) memoryStart;
   std::cout<<"\n";
@@ -271,6 +275,7 @@ static inline void printStateOfMemory() {
   }
 }
 
+// Helper method that assigns a freed memory block to a bin
 static inline void assignBlockToBinnedList(MemoryBlock * mb) {
   assert (mb != 0);
   assert (mb->isFree);
@@ -284,6 +289,8 @@ static inline void assignBlockToBinnedList(MemoryBlock * mb) {
   bins[index] = mb;
 }
 
+// Helper method that assigns a freed memory block to the unbinned list of the thread the block belongs to, 
+// used when a block is freed on a different thread than the one it was assigned on
 static inline void assignBlockToThreadSpecificUnbinnedList(MemoryBlock * mb) {
   assert(mb);
   assert(mb->isFree);
@@ -300,6 +307,8 @@ static inline void assignBlockToThreadSpecificUnbinnedList(MemoryBlock * mb) {
   pthread_mutex_unlock(&(mbThreadInfo->localLock));
 }
 
+// Helper method that removes a free memory block from a given binned list or unbinned list, used to unlink blocks
+// when they need to be used
 static inline void removeBlockFromLinkedList (MemoryBlock * mb, MemoryBlock * &listHead) {
   assert (mb != 0);
   if (mb->previousFreeBlock) {
@@ -312,11 +321,13 @@ static inline void removeBlockFromLinkedList (MemoryBlock * mb, MemoryBlock * &l
   }
 }
 
+// Helper method that sets a block's footer by assigning it the block's size
 static inline void assignBlockFooter (MemoryBlock * mb) {
   MemoryBlockFooter * footer = MB_ADDRESS_TO_OWN_FOOTER_ADDRESS(mb);
   *footer = mb->size;
 }
 
+// Helped method that truncates a memory block and takes care of the resulting extra free block
 static inline void truncateMemoryBlock (MemoryBlock * mb, size_t new_size) {
   assert(mb);
   if (mb->size > new_size + FREE_BLOCK_OVERHEAD + FREE_BLOCK_SPLIT_THRESHOLD) {
@@ -332,6 +343,8 @@ static inline void truncateMemoryBlock (MemoryBlock * mb, size_t new_size) {
   }
 }
 
+// Helper method that assigns all memory blocks present in the unbinned list to suitable binned lists.
+// Also coalesces contiguous free blocks.
 static inline void binAllUnbinnedBlocks() {
   if (!currentThreadInfo.unbinnedBlocks) {
     return;
@@ -344,7 +357,7 @@ static inline void binAllUnbinnedBlocks() {
   while (mb) {
     assert(mb->isFree);
     assert(mb->threadInfo == (void *) &currentThreadInfo);
-    mb->isFree = false;
+    mb->isFree = false; // Necessary as a sentinal for coalescing so blocks from the unbinned list don't coalesce with one another
     mb = mb->nextFreeBlock;
   }
 
@@ -383,6 +396,8 @@ static inline void binAllUnbinnedBlocks() {
     }
 
     mb->isFree = true;
+
+    // Assign to a suitable bin
     assignBlockToBinnedList(mb);
     currentThreadInfo.unbinnedBlocks = nextMB;
     mb = nextMB;
@@ -391,7 +406,7 @@ static inline void binAllUnbinnedBlocks() {
   pthread_mutex_unlock(&(currentThreadInfo.localLock));
 }
 
-
+// Helper method to initialize the state variables of a thread the first time it is run
 static inline void threadInit() {
   for (int i = 0; i < NUM_OF_BINS; i++) {
     bins[i] = 0;
@@ -416,8 +431,8 @@ static inline void threadInit() {
   isInitialized = true;
 }
 
-  //  malloc - Allocate a block by incrementing the brk pointer.
-  //  Always allocate a block whose size is a multiple of the alignment.
+  //  malloc - Allocate a block of the requested size.
+  //  Ensures block size is a multiple of the alignment.
 void * allocator::malloc(size_t size) {
   if (!isInitialized) {
     threadInit();
@@ -428,11 +443,14 @@ void * allocator::malloc(size_t size) {
   MemoryBlock * currentLocMB;
   int i = getBinIndex(alignedSize);
   binAllUnbinnedBlocks();
+
+  // Look through existing free blocks in binned lists to see if any of them can be recycled
   while (i < NUM_OF_BINS) {
-    currentLoc = bins[i]; //currentLoc is set to the first element in the binned free list
+    currentLoc = bins[i];
     currentLocMB = (MemoryBlock *) bins[i];
     while (currentLoc) {
       if (currentLocMB->size >= alignedSize) {
+        // Found a match
         truncateMemoryBlock(currentLocMB, alignedSize);
         removeBlockFromLinkedList(currentLocMB, bins[i]);
         currentLocMB->isFree = false;
@@ -444,6 +462,8 @@ void * allocator::malloc(size_t size) {
     }
     i++;
   }
+
+  // Did not find a free block that can be recycled. Must ask mem_sbrk for memory.
   GLOBAL_LOCK;
   void *p = mem_sbrk(alignedSize);
   if (p == (void *) -1) {
@@ -461,6 +481,8 @@ void * allocator::malloc(size_t size) {
   return MB_ADDRESS_TO_INTERNAL_SPACE_ADDRESS(currentLoc);
 }
 
+// free - Simply bins the block that needs to be freed if this thread owns it; otherwise, 
+// assigns it to the owner thread's unbinned list
 void allocator::free(void *ptr) {
   MemoryBlock * mb;
   mb = INTERNAL_SPACE_ADDRESS_TO_MB_ADDRESS(ptr);
@@ -474,19 +496,23 @@ void allocator::free(void *ptr) {
   return;
 }
 
-// realloc - Implemented simply in terms of malloc and free
+// realloc - Implemented using special cases to save the need for copying memory contents or calling both malloc and free
 void * allocator::realloc(void *ptr, size_t size) {
   
   MemoryBlock * mb = INTERNAL_SPACE_ADDRESS_TO_MB_ADDRESS(ptr);
   size_t alignedSize = ALIGN(size + ALLOCATED_BLOCK_OVERHEAD);
   alignedSize = (alignedSize > MINIMUM_ALLOCATED_BLOCK_SIZE)? alignedSize : MINIMUM_ALLOCATED_BLOCK_SIZE;
   
-  if (alignedSize < mb->size) { // new size is less than the existing size of the block
+  // Case when new size is less than the existing size of the block and the same block can be returned as is
+  if (alignedSize < mb->size) {
     truncateMemoryBlock(mb, alignedSize);
     return MB_ADDRESS_TO_INTERNAL_SPACE_ADDRESS(mb);
   }
+
+  // Case when new size is greater than existing size..
   if (alignedSize > mb->size) {
     MemoryBlock * nextMB = (MemoryBlock *) ((char *) mb + mb->size);
+    // .. but the block to the right in memory is also free and can be used to satisfy the reallocation
     if (nextMB != endOfHeap && nextMB->threadInfo == mb->threadInfo && nextMB->isFree && (mb->size + nextMB->size) >= alignedSize) {
       MemoryBlock * t = currentThreadInfo.unbinnedBlocks;
       MemoryBlock ** listHead = &bins[getBinIndex(nextMB->size)];
@@ -505,6 +531,8 @@ void * allocator::realloc(void *ptr, size_t size) {
     }
     else {
       GLOBAL_LOCK;
+      // Case when the block we need to reallocate is located at the end of the memory heap, 
+      // thereby allowing us to call mem_sbrk on  only the required difference in size
       if ((char *) mb + mb->size == (char *) endOfHeap) {
         size_t neededAllocation = alignedSize - mb->size;
         void *p = mem_sbrk(neededAllocation);
@@ -518,6 +546,8 @@ void * allocator::realloc(void *ptr, size_t size) {
         assignBlockFooter(mb);
         return MB_ADDRESS_TO_INTERNAL_SPACE_ADDRESS(mb);
       }
+
+      // Case when no special cases work and the only way to reallocate is to call malloc followed by free
       GLOBAL_UNLOCK;
       void * newptr = malloc(size);
       if (!newptr) {
@@ -530,6 +560,8 @@ void * allocator::realloc(void *ptr, size_t size) {
       return newptr;
     }
   }
+
+  // Case when new size is just the same as the original size of the block
   return ptr; 
 }
 
