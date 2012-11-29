@@ -337,7 +337,11 @@ static inline void truncateMemoryBlock (MemoryBlock * mb, size_t new_size) {
     nextBlock->isFree = true;
     nextBlock->threadInfo = mb->threadInfo;
     assignBlockFooter(nextBlock);
-    assignBlockToThreadSpecificUnbinnedList(nextBlock);
+    if (nextBlock->threadInfo == &currentThreadInfo) {
+      assignBlockToBinnedList(nextBlock);
+    } else {
+      assignBlockToThreadSpecificUnbinnedList(nextBlock);
+    }
     mb->size = new_size;
     assignBlockFooter(mb);
   }
